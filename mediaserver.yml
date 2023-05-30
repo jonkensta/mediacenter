@@ -1,0 +1,135 @@
+version: "2.1"
+services:
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - /opt/mediaserver/radarr:/config
+      - /mnt/merged/Movies:/movies
+      - /mnt/merged/Downloads:/downloads
+    ports:
+      - 7878:7878
+    restart: unless-stopped
+    extra_hosts:
+        - "host.docker.internal:host-gateway"
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - /opt/mediaserver/sonarr:/config
+      - /mnt/merged/TV:/tv
+      - /mnt/merged/Downloads:/downloads
+    ports:
+      - 8989:8989
+    restart: unless-stopped
+    extra_hosts:
+        - "host.docker.internal:host-gateway"
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - /opt/mediaserver/bazarr:/config
+      - /mnt/merged/Movies:/movies
+      - /mnt/merged/TV:/tv
+    ports:
+      - 6767:6767
+    restart: unless-stopped
+    extra_hosts:
+        - "host.docker.internal:host-gateway"
+
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    container_name: deluge
+    network_mode: host
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=Etc/UTC
+      - DELUGE_LOGLEVEL=info #optional
+    volumes:
+      - /opt/mediaserver/deluge:/config
+      - /mnt/merged/Downloads:/downloads
+    restart: unless-stopped
+
+  heimdall:
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - /opt/mediaserver/heimdall:/config
+    ports:
+      - 80:80
+      - 443:443
+    restart: unless-stopped
+
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    network_mode: host
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - VERSION=docker
+      - PLEX_CLAIM= #optional
+    volumes:
+      - /opt/mediaserver/plex:/config
+      - /mnt/merged/TV:/tv
+      - /mnt/merged/Movies:/movies
+    devices:
+      - /dev/dri:dev/dri
+    restart: unless-stopped
+
+  tautulli:
+    image: lscr.io/linuxserver/tautulli:latest
+    container_name: tautulli
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - /opt/mediaserver/tautulli:/config
+    ports:
+      - 8181:8181
+    restart: unless-stopped
+    extra_hosts:
+        - "host.docker.internal:host-gateway"
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    network_mode: host
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - JELLYFIN_PublishedServerUrl=
+    volumes:
+      - /opt/mediaserver/jellyfin:/config
+      - /mnt/merged/TV:/data/tvshows
+      - /mnt/merged/Movies:/data/movies
+    ports:
+      - 8096:8096
+      - 8920:8920 #optional
+      - 7359:7359/udp #optional
+      - 1900:1900/udp #optional
+    devices:
+      - /dev/dri:dev/dri
+    restart: unless-stopped
