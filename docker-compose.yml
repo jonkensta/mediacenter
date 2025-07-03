@@ -1,0 +1,225 @@
+secrets:
+  foundry_config_json:
+    file: ./foundryvtt/secrets.json
+
+services:
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - WEBPASSWORD=blackmaskdaddyhearthecar
+      - FTLCONF_webserver_api_password=blackmaskdaddyhearthecar
+      - FTLCONF_webserver_paths_prefix=/pihole
+      - FTLCONF_dns_listeningMode=ALL
+    volumes:
+      - './pihole/config:/etc/pihole'
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    restart: unless-stopped
+
+  endlessh:
+    image: lscr.io/linuxserver/endlessh:latest
+    container_name: endlessh
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - MSDELAY=10000 #optional
+      - MAXLINES=32 #optional
+      - MAXCLIENTS=4096 #optional
+      - LOGFILE=false #optional
+      - BINDFAMILY= #optional
+    volumes:
+      - ./endlessh:/config
+    ports:
+      - 2222:22/tcp
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - ./radarr:/config
+      - /mnt/merged/Movies:/movies
+      - /mnt/merged/Downloads:/downloads
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - ./sonarr:/config
+      - /mnt/merged/TV:/tv
+      - /mnt/merged/Downloads:/downloads
+    restart: unless-stopped
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - ./bazarr:/config
+      - /mnt/merged/Movies:/movies
+      - /mnt/merged/TV:/tv
+    restart: unless-stopped
+
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./gluetun:/gluetun
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - VPN_SERVICE_PROVIDER=private internet access
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=p7137164
+      - OPENVPN_PASSWORD=2Iz5Vy4Uvqy4FUHI8
+      - PORT_FORWARD_ONLY=true
+      - VPN_PORT_FORWARDING=on
+
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    container_name: deluge
+    network_mode: "service:gluetun"
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - DELUGE_LOGLEVEL=error
+    volumes:
+      - ./deluge:/config
+      - /mnt/merged/Downloads:/downloads
+    restart: unless-stopped
+    depends_on:
+      - gluetun
+
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - VERSION=docker
+      - PLEX_CLAIM= #optional
+    volumes:
+      - ./plex:/config
+      - /mnt/merged/TV:/tv
+      - /mnt/merged/Movies:/movies
+    ports:
+      - 32400:32400
+      - 1900:1900/udp
+      - 5353:5353/udp
+      - 8324:8324
+      - 32410:32410/udp
+      - 32412:32412/udp
+      - 32413:32413/udp
+      - 32414:32414/udp
+      - 32469:32469
+    devices:
+      - /dev/dri:/dev/dri
+    restart: unless-stopped
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=Etc/UTC
+      - JELLYFIN_PublishedServerUrl=
+    volumes:
+      - ./jellyfin:/config
+      - /mnt/merged/TV:/data/tvshows
+      - /mnt/merged/Movies:/data/movies
+    ports:
+      - 8096:8096
+      - 8920:8920 #optional
+      - 7359:7359/udp #optional
+    devices:
+      - /dev/dri:/dev/dri
+    restart: unless-stopped
+
+  heimdall:
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=Etc/UTC
+    volumes:
+      - ./heimdall:/config
+    restart: unless-stopped
+
+  foundry:
+    container_name: foundry
+    image: felddy/foundryvtt:release
+    hostname: manbearpug.duckdns.org
+    volumes:
+      - ./foundryvtt/data:/data
+    environment:
+      - TZ=America/Chicago
+      - CONTAINER_CACHE=/data/container_cache
+      - FOUNDRY_UID=1012
+      - FOUNDRY_GID=1012
+      - FOUNDRY_PROXY_PORT=443
+      - FOUNDRY_PROXY_SSL=true
+      - FOUNDRY_SSL_CERT=
+      - FOUNDRY_SSL_KEY=
+      - FOUNDRY_ROUTE_PREFIX=foundry
+      - FOUNDRY_HOSTNAME=manbearpug.duckdns.org
+    ports:
+      - 30000:30000/tcp
+    secrets:
+      - source: foundry_config_json 
+        target: config.json
+
+  swag:
+    image: lscr.io/linuxserver/swag:latest
+    container_name: swag
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=Etc/UTC
+      - URL=manbearpug.duckdns.org
+      - VALIDATION=dns
+      - SUBDOMAINS=www, #optional
+      - CERTPROVIDER=zerossl #optional
+      - DNSPLUGIN=duckdns
+      - PROPAGATION= #optional
+      - EMAIL=zerossl@jstarr.me
+      - ONLY_SUBDOMAINS=false #optional
+      - EXTRA_DOMAINS= #optional
+      - STAGING=false #optional
+    volumes:
+      - ./swag:/config
+    ports:
+      - 80:80
+      - 443:443
+    restart: unless-stopped
