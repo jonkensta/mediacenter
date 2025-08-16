@@ -114,33 +114,6 @@ services:
     depends_on:
       - gluetun
 
-  plex:
-    image: lscr.io/linuxserver/plex:latest
-    container_name: plex
-    environment:
-      - PUID=1012
-      - PGID=1012
-      - TZ=America/Chicago
-      - VERSION=docker
-      - PLEX_CLAIM= #optional
-    volumes:
-      - ./plex:/config
-      - /mnt/merged/TV:/tv
-      - /mnt/merged/Movies:/movies
-    ports:
-      - 32400:32400
-      - 1900:1900/udp
-      - 5353:5353/udp
-      - 8324:8324
-      - 32410:32410/udp
-      - 32412:32412/udp
-      - 32413:32413/udp
-      - 32414:32414/udp
-      - 32469:32469
-    devices:
-      - /dev/dri:/dev/dri
-    restart: unless-stopped
-
   jellyfin:
     image: lscr.io/linuxserver/jellyfin:latest
     container_name: jellyfin
