@@ -4,23 +4,20 @@ secrets:
 
 services:
   pihole:
-    image: pihole/pihole:latest
+    image: pihole/pihole:v5.8.1
     container_name: pihole
     ports:
-      - "53:53/tcp"
       - "53:53/udp"
+      - "53:53/tcp"
     environment:
       - PUID=1012
       - PGID=1012
       - TZ=America/Chicago
-      - WEBPASSWORD=blackmaskdaddyhearthecar
-      - FTLCONF_webserver_api_password=blackmaskdaddyhearthecar
-      - FTLCONF_webserver_paths_prefix=/pihole
-      - FTLCONF_dns_listeningMode=ALL
+      - WEBPASSWORD=pihole_webpassword_here
+      - VIRTUAL_HOST=manbearpug.duckdns.org
     volumes:
-      - './pihole/config:/etc/pihole'
+      - "./pihole/config:/etc/pihole"
     cap_add:
-      - NET_ADMIN
       - SYS_NICE
     restart: unless-stopped
 
@@ -195,7 +192,7 @@ services:
     ports:
       - 30000:30000/tcp
     secrets:
-      - source: foundry_config_json 
+      - source: foundry_config_json
         target: config.json
 
   swag:
