@@ -5,35 +5,38 @@ Requires=dev-ttyUSB0.device
 
 [Service]
 Type=oneshot
-ExecStartPre=/usr/local/bin/relay /dev/ttyUSB0 close
-ExecStart=/usr/local/bin/await-block-devices       \
+ExecStart=/usr/local/bin/await-block-devices \
+              --relay-device /dev/ttyUSB0 \
+              --timeout 180 \
               348ed5fb-b1a8-477f-8758-689077bb6fba \
               22d20912-fb50-4df7-ad58-6d9d7645e8af \
               1307fc22-3f19-4692-a547-c8325b96a30a \
-	      6184078e-d973-4894-b41d-bb03e18c8a4b \
+              6184078e-d973-4894-b41d-bb03e18c8a4b \
               019981e1-9a2c-4935-8d4f-7274379fbb04 \
               eec7cab2-45a8-4c17-9533-6f4f53a5155f \
               d6bec5ce-c2a7-498f-8631-d4e983df61ee \
               ee1dd6be-94ad-4247-baf5-66a17dbc67df
-ExecStartPost=mount -U 348ed5fb-b1a8-477f-8758-689077bb6fba /mnt/00
-ExecStartPost=mount -U 22d20912-fb50-4df7-ad58-6d9d7645e8af /mnt/01
-ExecStartPost=mount -U 1307fc22-3f19-4692-a547-c8325b96a30a /mnt/02
-ExecStartPost=mount -U 6184078e-d973-4894-b41d-bb03e18c8a4b /mnt/03
-ExecStartPost=mount -U 019981e1-9a2c-4935-8d4f-7274379fbb04 /mnt/04
-ExecStartPost=mount -U eec7cab2-45a8-4c17-9533-6f4f53a5155f /mnt/05
-ExecStartPost=mount -U d6bec5ce-c2a7-498f-8631-d4e983df61ee /mnt/06
-ExecStartPost=mount -U ee1dd6be-94ad-4247-baf5-66a17dbc67df /mnt/07
-ExecStopPost=/usr/bin/umount /mnt/00
-ExecStopPost=/usr/bin/umount /mnt/01
-ExecStopPost=/usr/bin/umount /mnt/02
-ExecStopPost=/usr/bin/umount /mnt/03
-ExecStopPost=/usr/bin/umount /mnt/04
-ExecStopPost=/usr/bin/umount /mnt/05
-ExecStopPost=/usr/bin/umount /mnt/06
-ExecStopPost=/usr/bin/umount /mnt/07
+ExecStartPost=-/usr/bin/mount -U 348ed5fb-b1a8-477f-8758-689077bb6fba /mnt/00
+ExecStartPost=-/usr/bin/mount -U 22d20912-fb50-4df7-ad58-6d9d7645e8af /mnt/01
+ExecStartPost=-/usr/bin/mount -U 1307fc22-3f19-4692-a547-c8325b96a30a /mnt/02
+ExecStartPost=-/usr/bin/mount -U 6184078e-d973-4894-b41d-bb03e18c8a4b /mnt/03
+ExecStartPost=-/usr/bin/mount -U 019981e1-9a2c-4935-8d4f-7274379fbb04 /mnt/04
+ExecStartPost=-/usr/bin/mount -U eec7cab2-45a8-4c17-9533-6f4f53a5155f /mnt/05
+ExecStartPost=-/usr/bin/mount -U d6bec5ce-c2a7-498f-8631-d4e983df61ee /mnt/06
+ExecStartPost=-/usr/bin/mount -U ee1dd6be-94ad-4247-baf5-66a17dbc67df /mnt/07
+ExecStopPost=-/usr/bin/umount /mnt/00
+ExecStopPost=-/usr/bin/umount /mnt/01
+ExecStopPost=-/usr/bin/umount /mnt/02
+ExecStopPost=-/usr/bin/umount /mnt/03
+ExecStopPost=-/usr/bin/umount /mnt/04
+ExecStopPost=-/usr/bin/umount /mnt/05
+ExecStopPost=-/usr/bin/umount /mnt/06
+ExecStopPost=-/usr/bin/umount /mnt/07
 ExecStopPost=/usr/bin/sleep 5s
 ExecStopPost=/usr/local/bin/relay /dev/ttyUSB0 open
 ExecStopPost=/usr/bin/sleep 5s
+StandardOutput=journal
+StandardError=journal
 RemainAfterExit=true
 Restart=on-failure
 RestartSec=60
