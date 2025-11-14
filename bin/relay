@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Open or close a USB relay over serial."""
+
+import argparse
+import pathlib
+
+import serial
+
+
+def main():
+    """Open or close a USB relay over serial."""
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument(
+        "--baudrate", type=int,
+        default=9600,
+        help="Serial baud rate."
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=5.0,
+        help="Timeout to wait in seconds.",
+    )
+    parser.add_argument(
+        "port",
+        type=pathlib.Path,
+        help="Path to the serial device.",
+    )
+
+    subparsers = parser.add_subparsers(title='Commands', dest='command')
+    subparsers.add_parser("test", description="Test the serial communication.")
+    subparsers.add_parser("open", description="Open the USB relay.")
+    subparsers.add_parser("close", description="Close the USB relay.")
+    args = parser.parse_args()
+
+    if not args.port.is_char_device():
+        msg = "Given device filepath does not exist or is not a char device."
+        raise argparse.ArgumentError(None, msg)
+
+    port = str(args.port)
+    with serial.Serial(port, args.baudrate, timeout=args.timeout) as sio:
+
+        def test() -> bool:
+            sio.write(b"AT")
+            response = sio.readline().strip()
+            return response == b"OK"
+
+        def close() -> bool:
+            sio.write(b"AT+CH1=1")
+            response = sio.readline().strip()
+            return response == b"OK+CH1=1"
+
+        def open_() -> bool:
+            sio.write(b"AT+CH1=0")
+            response = sio.readline().strip()
+            return response == b"OK+CH1=0"
+
+        commands = {
+            "test": test,
+            "close": close,
+            "open": open_,
+        }
+
+        try:
+            command = commands[args.command]
+        except KeyError as error:
+            raise ValueError(f"Unsupported command {args.command}.") from error
+
+        success = command()
+        if not success:
+            raise serial.SerialException("Unexpected response from device.")
+
+
+if __name__ == "__main__":
+    main()

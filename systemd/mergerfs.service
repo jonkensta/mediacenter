@@ -1,0 +1,20 @@
+[Unit]
+Description=mergerfs service
+After=mount-das.service
+Requires=mount-das.service
+
+[Service]
+Type=simple
+KillMode=none
+ExecStart=/usr/bin/mergerfs \
+  -f \
+  -o cache.files=partial \
+  -o dropcacheonclose=true \
+  -o category.create=mfs \
+  /mnt/00:/mnt/01:/mnt/02:/mnt/03:/mnt/04:/mnt/05:/mnt/06:/mnt/07 \
+  /mnt/merged
+ExecStop=/bin/fusermount -uz /mnt/merged
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

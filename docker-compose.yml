@@ -4,7 +4,7 @@ secrets:
 
 services:
   pihole:
-    image: pihole/pihole:v5.8.1
+    image: pihole/pihole:latest
     container_name: pihole
     ports:
       - "53:53/udp"
@@ -13,10 +13,10 @@ services:
       - PUID=1012
       - PGID=1012
       - TZ=America/Chicago
-      - WEBPASSWORD=pihole_webpassword_here
-      - VIRTUAL_HOST=manbearpug.duckdns.org
+      - WEBPASSWORD=YOUR_PIHOLE_PASSWORD
+      - VIRTUAL_HOST=pihole.jstarr.me
     volumes:
-      - "./pihole/config:/etc/pihole"
+      - ./pihole/config:/etc/pihole
     cap_add:
       - SYS_NICE
     restart: unless-stopped
@@ -36,7 +36,7 @@ services:
     volumes:
       - ./endlessh:/config
     ports:
-      - 2222:22/tcp
+      - 2222:2222/tcp
     restart: unless-stopped
 
   radarr:
@@ -83,20 +83,21 @@ services:
     container_name: gluetun
     cap_add:
       - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    volumes:
-      - ./gluetun:/gluetun
     environment:
       - PUID=1012
       - PGID=1012
       - TZ=America/Chicago
       - VPN_SERVICE_PROVIDER=private internet access
       - VPN_TYPE=openvpn
-      - OPENVPN_USER=p7137164
-      - OPENVPN_PASSWORD=2Iz5Vy4Uvqy4FUHI8
+      - OPENVPN_USER=YOUR_VPN_USERNAME
+      - OPENVPN_PASSWORD=YOUR_VPN_PASSWORD
       - PORT_FORWARD_ONLY=true
       - VPN_PORT_FORWARDING=on
+    volumes:
+      - ./gluetun:/gluetun
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    restart: unless-stopped
 
   deluge:
     image: lscr.io/linuxserver/deluge:latest
@@ -145,28 +146,37 @@ services:
       - ./heimdall:/config
     restart: unless-stopped
 
-  foundry:
-    container_name: foundry
+  foundryvtt:
+    container_name: foundryvtt
     image: felddy/foundryvtt:release
-    hostname: manbearpug.duckdns.org
+    hostname: foundryvtt.jstarr.me
+    user: "1012:1012"
     volumes:
       - ./foundryvtt/data:/data
     environment:
       - TZ=America/Chicago
       - CONTAINER_CACHE=/data/container_cache
-      - FOUNDRY_UID=1012
-      - FOUNDRY_GID=1012
       - FOUNDRY_PROXY_PORT=443
       - FOUNDRY_PROXY_SSL=true
       - FOUNDRY_SSL_CERT=
       - FOUNDRY_SSL_KEY=
-      - FOUNDRY_ROUTE_PREFIX=foundry
-      - FOUNDRY_HOSTNAME=manbearpug.duckdns.org
+      - FOUNDRY_ROUTE_PREFIX=
+      - FOUNDRY_HOSTNAME=foundryvtt.jstarr.me
     ports:
       - 30000:30000/tcp
     secrets:
-      - source: foundry_config_json
+      - source: foundry_config_json 
         target: config.json
+
+  cloudflare-ddns:
+    image: oznu/cloudflare-ddns:latest
+    container_name: cloudflare-ddns
+    restart: always
+    environment:
+      - API_KEY=YOUR_CLOUDFLARE_API_KEY
+      - ZONE=jstarr.me
+      - SUBDOMAIN=
+      - PROXIED=false
 
   swag:
     image: lscr.io/linuxserver/swag:latest
@@ -177,11 +187,11 @@ services:
       - PUID=1012
       - PGID=1012
       - TZ=Etc/UTC
-      - URL=manbearpug.duckdns.org
+      - URL=jstarr.me
       - VALIDATION=dns
-      - SUBDOMAINS=www, #optional
-      - CERTPROVIDER=zerossl #optional
-      - DNSPLUGIN=duckdns
+      - SUBDOMAINS=wildcard
+      - CERTPROVIDER=zerossl
+      - DNSPLUGIN=cloudflare
       - PROPAGATION= #optional
       - EMAIL=zerossl@jstarr.me
       - ONLY_SUBDOMAINS=false #optional
