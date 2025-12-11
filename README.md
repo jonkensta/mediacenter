@@ -24,9 +24,17 @@ There might be a less manual way to set the user, but I haven't gotten anything 
 Create the config folders for each service:
 
 ```bash
-sudo mkdir -p /opt/mediaserver/{radarr,sonarr,bazarr,deluge,heimdall,jellyfin,pihole,endlessh,gluetun,foundryvtt,cloudflare-ddns,swag}
-sudo cp docker-compose.yml /opt/mediaserver
+# Create directories for services
+sudo mkdir -p /opt/mediaserver/{radarr,sonarr,bazarr,deluge,heimdall,jellyfin,endlessh,gluetun,foundryvtt,cloudflare-ddns,swag}
+sudo mkdir -p /opt/pihole/config
+
+# Copy the compose files to their respective destinations, naming them docker-compose.yml
+sudo cp docker-compose.mediaserver.yml /opt/mediaserver/docker-compose.yml
+sudo cp docker-compose.pihole.yml /opt/pihole/docker-compose.yml
+
+# Set permissions
 sudo chown -R media:media /opt/mediaserver
+sudo chown -R media:media /opt/pihole
 ```
 
 ## Utility Scripts
@@ -50,14 +58,22 @@ sudo pacman -S python-pyudev python-pyserial
 Install and enable the systemd service files in dependency order:
 
 ```bash
-sudo cp systemd/*.service /etc/systemd/system/
+sudo cp systemd/mount-das.service /etc/systemd/system/
+sudo cp systemd/mergerfs.service /etc/systemd/system/
+sudo cp systemd/mediaserver.service /etc/systemd/system/
+
 sudo systemctl enable mount-das.service mergerfs.service mediaserver.service
 ```
 
 The service dependency chain is:
 1. `mount-das.service` - Powers on the DAS using a USB relay and mounts all drives
 2. `mergerfs.service` - Creates a merged view of all drives at `/mnt/merged`
-3. `mediaserver.service` - Starts all Docker containers
+3. `mediaserver.service` - Starts the main Docker containers.
+
+The `pihole` service is now managed separately. It can be enabled and started using a systemd template service:
+```bash
+sudo systemctl enable --now docker-compose@pihole
+```
 
 ## Configuration
 
@@ -73,7 +89,7 @@ sudo nano /opt/mediaserver/foundryvtt/secrets.json
 
 ### Credentials
 
-Before deploying, update all placeholder credentials in `docker-compose.yml`:
+Before deploying, update all placeholder credentials in `docker-compose.mediaserver.yml` and `docker-compose.pihole.yml`:
 - PiHole admin password (`WEBPASSWORD`)
 - VPN credentials (`OPENVPN_USER`, `OPENVPN_PASSWORD`)
 - Cloudflare API key (`API_KEY`)
@@ -113,6 +129,12 @@ SWAG (Secure Web Application Gateway) provides reverse proxy and SSL termination
 See the [SWAG documentation](https://docs.linuxserver.io/general/swag/) for more details.
 
 ## Connecting Services
+
+First create the external docker network:
+
+```bash
+docker network create mediaserver
+```
 
 For any non-hostmode service, they can talk to each other using the container name as a DNS name.
 
