@@ -70,7 +70,8 @@ The service dependency chain is:
 2. `mergerfs.service` - Creates a merged view of all drives at `/mnt/merged`
 3. `mediaserver.service` - Starts the main Docker containers.
 
-The `pihole` service is now managed separately. It can be enabled and started using a systemd template service:
+The `pihole` service is now managed separately. It can be enabled and started using a systemd template service. For instructions on creating the necessary template file, see the [Arch Linux Wiki](https://wiki.archlinux.org/title/Docker#Start_Docker_Compose_projects_on_boot).
+
 ```bash
 sudo systemctl enable --now docker-compose@pihole
 ```
