@@ -68,6 +68,19 @@ services:
     networks:
       - mediaserver
 
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - ./prowlarr:/config
+    restart: unless-stopped
+    networks:
+      - mediaserver
+
   gluetun:
     image: qmcgaw/gluetun
     container_name: gluetun
