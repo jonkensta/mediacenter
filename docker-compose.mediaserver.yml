@@ -81,6 +81,21 @@ services:
     networks:
       - mediaserver
 
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+    volumes:
+      - ./lidarr:/config
+      - /mnt/merged/Music:/music
+      - /mnt/merged/Downloads:/downloads
+    restart: unless-stopped
+    networks:
+      - mediaserver
+
   gluetun:
     image: qmcgaw/gluetun
     container_name: gluetun

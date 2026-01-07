@@ -25,7 +25,7 @@ Create the config folders for each service:
 
 ```bash
 # Create directories for services
-sudo mkdir -p /opt/mediaserver/{radarr,sonarr,bazarr,prowlarr,deluge,heimdall,jellyfin,endlessh,gluetun,foundryvtt,cloudflare-ddns,swag}
+sudo mkdir -p /opt/mediaserver/{radarr,sonarr,lidarr,bazarr,prowlarr,deluge,heimdall,jellyfin,endlessh,gluetun,foundryvtt,cloudflare-ddns,swag}
 sudo mkdir -p /opt/pihole/config
 
 # Copy the compose files to their respective destinations, naming them docker-compose.yml
@@ -116,6 +116,7 @@ SWAG (Secure Web Application Gateway) provides reverse proxy and SSL termination
    sudo cp foundryvtt.subdomain.conf.sample foundryvtt.subdomain.conf
    sudo cp heimdall.subdomain.conf.sample heimdall.subdomain.conf
    sudo cp jellyfin.subdomain.conf.sample jellyfin.subdomain.conf
+   sudo cp lidarr.subdomain.conf.sample lidarr.subdomain.conf
    sudo cp pihole.subdomain.conf.sample pihole.subdomain.conf
    sudo cp prowlarr.subdomain.conf.sample prowlarr.subdomain.conf
    sudo cp radarr.subdomain.conf.sample radarr.subdomain.conf
