@@ -150,6 +150,8 @@ services:
     restart: unless-stopped
     depends_on:
       - gluetun
+    networks:
+      - mediaserver
 
   jellyfin:
     image: lscr.io/linuxserver/jellyfin:latest

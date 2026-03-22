@@ -12,7 +12,7 @@ services:
       - WEBPASSWORD=YOUR_PIHOLE_PASSWORD
       - VIRTUAL_HOST=pihole.jstarr.me
     volumes:
-      - ./config:/etc/pihole
+      - ./pihole/config:/etc/pihole
     cap_add:
       - SYS_NICE
     restart: unless-stopped

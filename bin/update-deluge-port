@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+
+PORT=$(docker exec gluetun wget -qO- --header='X-API-Key: 8NVHkJxXiaSszwvQghrJhX' http://localhost:8000/v1/portforward | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+
+if [ -z "$PORT" ] || [ "$PORT" -eq 0 ]; then
+    echo "Error: could not get forwarded port from gluetun (got: ${PORT:-empty})" >&2
+    exit 1
+fi
+
+docker exec deluge deluge-console -U localclient -P 574bfec57c6428e511b86ad7c4a98998f3889fde "config -s listen_ports [$PORT,$PORT]"
+echo "Deluge listen port set to $PORT"
