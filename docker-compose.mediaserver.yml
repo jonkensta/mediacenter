@@ -10,11 +10,11 @@ services:
       - PUID=1012
       - PGID=1012
       - TZ=America/Chicago
-      - MSDELAY=10000 #optional
-      - MAXLINES=32 #optional
-      - MAXCLIENTS=4096 #optional
-      - LOGFILE=false #optional
-      - BINDFAMILY= #optional
+      - MSDELAY=10000
+      - MAXLINES=32
+      - MAXCLIENTS=4096
+      - LOGFILE=false
+      - BINDFAMILY=
     volumes:
       - ./endlessh:/config
     ports:
@@ -127,14 +127,12 @@ services:
     environment:
       - PUID=1012
       - PGID=1012
-      - TZ=Etc/UTC
+      - TZ=America/Chicago
       - JELLYFIN_PublishedServerUrl=
     volumes:
       - ./jellyfin:/config
       - /mnt/merged/TV:/data/tvshows
       - /mnt/merged/Movies:/data/movies
-    ports:
-      - 7359:7359/udp #optional
     devices:
       - /dev/dri:/dev/dri
     restart: unless-stopped
@@ -147,7 +145,7 @@ services:
     environment:
       - PUID=1012
       - PGID=1012
-      - TZ=Etc/UTC
+      - TZ=America/Chicago
     volumes:
       - ./heimdall:/config
     restart: unless-stopped
@@ -155,8 +153,8 @@ services:
       - mediaserver
 
   foundryvtt:
-    container_name: foundryvtt
     image: felddy/foundryvtt:release
+    container_name: foundryvtt
     hostname: foundryvtt.jstarr.me
     user: "1012:1012"
     volumes:
@@ -166,8 +164,8 @@ services:
       - CONTAINER_CACHE=/data/container_cache
       - FOUNDRY_PROXY_PORT=443
       - FOUNDRY_PROXY_SSL=true
-      - FOUNDRY_SSL_CERT=
-      - FOUNDRY_SSL_KEY=
+      - FOUNDRY_SSL_CERT= # SSL handled by SWAG
+      - FOUNDRY_SSL_KEY= # SSL handled by SWAG
       - FOUNDRY_ROUTE_PREFIX=
       - FOUNDRY_HOSTNAME=foundryvtt.jstarr.me
     secrets:
@@ -179,7 +177,7 @@ services:
   cloudflare-ddns:
     image: oznu/cloudflare-ddns:latest
     container_name: cloudflare-ddns
-    restart: always
+    restart: unless-stopped
     environment:
       - API_KEY=YOUR_CLOUDFLARE_API_KEY
       - ZONE=jstarr.me
@@ -196,17 +194,17 @@ services:
     environment:
       - PUID=1012
       - PGID=1012
-      - TZ=Etc/UTC
+      - TZ=America/Chicago
       - URL=jstarr.me
       - VALIDATION=dns
       - SUBDOMAINS=wildcard
       - CERTPROVIDER=zerossl
       - DNSPLUGIN=cloudflare
-      - PROPAGATION= #optional
+      - PROPAGATION=
       - EMAIL=zerossl@jstarr.me
-      - ONLY_SUBDOMAINS=false #optional
-      - EXTRA_DOMAINS= #optional
-      - STAGING=false #optional
+      - ONLY_SUBDOMAINS=false
+      - EXTRA_DOMAINS=
+      - STAGING=false
     volumes:
       - ./swag:/config
     ports:
