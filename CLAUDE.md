@@ -37,10 +37,56 @@ This repository contains configuration files and utilities for managing a Docker
 
 ### Utility Scripts
 
-Both located in `bin/` and deployed to `/usr/local/bin/`:
+Located in `bin/` and deployed to `/usr/local/bin/`:
 
 - `relay` - Python script using pyserial to control USB relay (commands: open, close, test)
 - `await-block-devices` - Python script using pyudev to wait for block devices by UUID (async polling with timeout)
+- `update-deluge-port` - Reads the forwarded port from Gluetun and sets it as Deluge's listen port
+
+#### Deluge management scripts (run inside the container via `docker exec`)
+
+These scripts connect to the Deluge daemon over RPC. They use `/config/venv/bin/python3` (a venv inside the deluge container's config volume with `deluge-client` installed). All read daemon credentials automatically from `/config/auth`.
+
+- `deluge-list-torrents` - Lists all torrents as TSV: `hash`, `name`, `size`, `label`, `tracker`, `tracker_status`
+- `deluge-remove-torrent` - Removes torrents and their data; reads hashes from stdin (one per line)
+- `deluge-update-tracker` - Forces a tracker re-announce; reads hashes from stdin (one per line)
+
+```bash
+# Copy scripts into the container after modifying
+docker cp bin/deluge-list-torrents deluge:/usr/local/bin/deluge-list-torrents
+docker cp bin/deluge-remove-torrent deluge:/usr/local/bin/deluge-remove-torrent
+docker cp bin/deluge-update-tracker deluge:/usr/local/bin/deluge-update-tracker
+
+# List all torrents
+docker exec deluge deluge-list-torrents
+
+# Remove unregistered torrents (HDBits removed)
+docker exec deluge deluge-list-torrents | grep "not registered" | cut -f1 | docker exec -i deluge deluge-remove-torrent
+
+# Re-announce unreachable torrents
+docker exec deluge deluge-list-torrents | grep "unreachable" | cut -f1 | docker exec -i deluge deluge-update-tracker
+
+# Remove all non-HDBits torrents
+docker exec deluge deluge-list-torrents | grep -v "hdbits.org" | cut -f1 | docker exec -i deluge deluge-remove-torrent
+
+# Interactive removal with fzf (tab to multi-select)
+docker exec deluge deluge-list-torrents | fzf -m --with-nth=2.. | cut -f1 | docker exec -i deluge deluge-remove-torrent
+```
+
+#### mergerfs utility scripts
+
+- `mergerfs-hardlink-downloads` - Finds files duplicated between `/mnt/merged/Downloads` and the media library (Movies/TV), matched by file size. Replaces media copies with hardlinks to the Downloads copy, moving files to the same branch if needed. Requires the media server to be stopped before running with `--execute`.
+
+```bash
+# Dry-run (safe, default)
+bin/mergerfs-hardlink-downloads
+
+# Execute (stop mediaserver.service first, fix ownership after)
+sudo systemctl stop mediaserver.service
+bin/mergerfs-hardlink-downloads --execute
+sudo chown -R media:media /mnt/0{0..7}
+sudo systemctl start mediaserver.service
+```
 
 ## Key Configuration Points
 
@@ -108,6 +154,6 @@ docker compose up -d
 ## Important Constraints
 
 - **No parity**: Data can be re-downloaded, so no snapraid/parity drive is used
-- **No hardlinks**: Disabled in radarr/sonarr due to mergerfs behavior
+- **Hardlinks enabled**: Radarr/sonarr use hardlinks. mergerfs uses `epmfs` (existing path, most free space) create policy so new files land on the same branch as their parent directory, making hardlinks work correctly across the pool.
 - **mergerfs cache setting**: Must keep `cache.files=partial` for deluge's mmap usage
 - **Credentials**: This is a public repo - never commit real credentials, use placeholders only

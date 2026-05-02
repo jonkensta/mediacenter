@@ -1,0 +1,67 @@
+#!/config/venv/bin/python3
+"""
+Remove torrents from Deluge by hash, along with their data files.
+Reads torrent hashes from stdin, one per line.
+
+Intended to run inside the deluge container:
+  docker exec -i deluge deluge-remove-torrent
+
+Requires the deluge-client package:
+  pip install deluge-client
+
+Examples:
+  # Remove a specific torrent by hash
+  echo <hash> | docker exec -i deluge deluge-remove-torrent
+
+  # Remove all unregistered torrents (no confirmation prompt)
+  docker exec deluge deluge-list-torrents \
+    | grep "not registered" \
+    | cut -f1 \
+    | docker exec -i deluge deluge-remove-torrent
+
+  # Interactive removal with fzf (multi-select with tab)
+  docker exec deluge deluge-list-torrents \
+    | fzf -m --with-nth=2.. \
+    | cut -f1 \
+    | docker exec -i deluge deluge-remove-torrent
+"""
+
+import sys
+
+try:
+    from deluge_client import DelugeRPCClient
+except ImportError:
+    print("Error: deluge-client not installed. Run: pip install deluge-client", file=sys.stderr)
+    sys.exit(1)
+
+AUTH_FILE = "/config/auth"
+HOST = "127.0.0.1"
+PORT = 58846
+
+
+def read_localclient_password(auth_file):
+    with open(auth_file) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("localclient:"):
+                return line.split(":")[1]
+    raise RuntimeError(f"localclient entry not found in {auth_file}")
+
+
+def main():
+    hashes = [line.strip() for line in sys.stdin if line.strip()]
+    if not hashes:
+        print("No hashes provided on stdin.", file=sys.stderr)
+        sys.exit(1)
+
+    password = read_localclient_password(AUTH_FILE)
+    client = DelugeRPCClient(HOST, PORT, "localclient", password)
+    client.connect()
+
+    for torrent_hash in hashes:
+        client.core.remove_torrent(torrent_hash, True)  # True = delete data
+        print(f"Removed: {torrent_hash}")
+
+
+if __name__ == "__main__":
+    main()

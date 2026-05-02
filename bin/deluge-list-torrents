@@ -1,0 +1,79 @@
+#!/config/venv/bin/python3
+"""
+List all torrents from Deluge as TSV on stdout.
+
+Columns: hash, name, size, label, tracker, tracker_status
+
+Intended to run inside the deluge container:
+  docker exec deluge deluge-list-torrents
+
+Requires the deluge-client package:
+  pip install deluge-client
+
+Examples:
+  # Show all torrents
+  docker exec deluge deluge-list-torrents
+
+  # Filter by tracker status
+  docker exec deluge deluge-list-torrents | grep "not registered"
+
+  # Interactive picker (fzf) showing name/size/label/status, hash hidden
+  docker exec deluge deluge-list-torrents | fzf -m --with-nth=2..
+
+  # Pretty-print as table
+  docker exec deluge deluge-list-torrents | column -ts $'\t'
+"""
+
+import sys
+
+try:
+    from deluge_client import DelugeRPCClient
+except ImportError:
+    print("Error: deluge-client not installed. Run: pip install deluge-client", file=sys.stderr)
+    sys.exit(1)
+
+AUTH_FILE = "/config/auth"
+HOST = "127.0.0.1"
+PORT = 58846
+
+
+def read_localclient_password(auth_file):
+    with open(auth_file) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("localclient:"):
+                return line.split(":")[1]
+    raise RuntimeError(f"localclient entry not found in {auth_file}")
+
+
+def human_size(num_bytes):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if num_bytes < 1024:
+            return f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024
+    return f"{num_bytes:.1f} PB"
+
+
+def main():
+    password = read_localclient_password(AUTH_FILE)
+    client = DelugeRPCClient(HOST, PORT, "localclient", password)
+    client.connect()
+
+    torrents = client.core.get_torrents_status(
+        {}, ["name", "total_size", "label", "tracker", "tracker_status"]
+    )
+
+    for tid, info in torrents.items():
+        fields = [
+            tid.decode(),
+            info[b"name"].decode(),
+            human_size(info[b"total_size"]),
+            info[b"label"].decode(),
+            info[b"tracker"].decode(),
+            info[b"tracker_status"].decode(),
+        ]
+        print("\t".join(fields))
+
+
+if __name__ == "__main__":
+    main()

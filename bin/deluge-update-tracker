@@ -1,0 +1,58 @@
+#!/config/venv/bin/python3
+"""
+Force a tracker re-announce for torrents by hash.
+Reads torrent hashes from stdin, one per line.
+
+Intended to run inside the deluge container:
+  docker exec -i deluge deluge-update-tracker
+
+Examples:
+  # Re-announce a specific torrent
+  echo <hash> | docker exec -i deluge deluge-update-tracker
+
+  # Re-announce all timed-out torrents
+  docker exec deluge deluge-list-torrents \
+    | grep "timed out" \
+    | cut -f1 \
+    | docker exec -i deluge deluge-update-tracker
+"""
+
+import sys
+
+try:
+    from deluge_client import DelugeRPCClient
+except ImportError:
+    print("Error: deluge-client not installed. Run: pip install deluge-client", file=sys.stderr)
+    sys.exit(1)
+
+AUTH_FILE = "/config/auth"
+HOST = "127.0.0.1"
+PORT = 58846
+
+
+def read_localclient_password(auth_file):
+    with open(auth_file) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("localclient:"):
+                return line.split(":")[1]
+    raise RuntimeError(f"localclient entry not found in {auth_file}")
+
+
+def main():
+    hashes = [line.strip() for line in sys.stdin if line.strip()]
+    if not hashes:
+        print("No hashes provided on stdin.", file=sys.stderr)
+        sys.exit(1)
+
+    password = read_localclient_password(AUTH_FILE)
+    client = DelugeRPCClient(HOST, PORT, "localclient", password)
+    client.connect()
+
+    client.core.force_reannounce(hashes)
+    for h in hashes:
+        print(f"Updated: {h}")
+
+
+if __name__ == "__main__":
+    main()
