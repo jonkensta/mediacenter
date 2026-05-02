@@ -81,37 +81,6 @@ services:
     networks:
       - mediaserver
 
-  lidarr:
-    image: lscr.io/linuxserver/lidarr:latest
-    container_name: lidarr
-    environment:
-      - PUID=1012
-      - PGID=1012
-      - TZ=America/Chicago
-    volumes:
-      - ./lidarr:/config
-      - /mnt/merged/Music:/music
-      - /mnt/merged/Downloads:/downloads
-    restart: unless-stopped
-    networks:
-      - mediaserver
-
-  navidrome:
-    image: deluan/navidrome:latest
-    container_name: navidrome
-    user: "1012:1012"
-    environment:
-      - ND_SCANSCHEDULE=1h
-      - ND_LOGLEVEL=info
-      - ND_SESSIONTIMEOUT=24h
-      - ND_BASEURL=
-    volumes:
-      - ./navidrome:/data
-      - /mnt/merged/Music:/music:ro
-    restart: unless-stopped
-    networks:
-      - mediaserver
-
   gluetun:
     image: qmcgaw/gluetun
     container_name: gluetun
