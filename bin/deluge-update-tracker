@@ -10,13 +10,15 @@ Examples:
   # Re-announce a specific torrent
   echo <hash> | docker exec -i deluge deluge-update-tracker
 
-  # Re-announce all timed-out torrents
+  # Re-announce all timed-out torrents. Filter on the tracker_status COLUMN so a
+  # release whose name happens to contain the phrase is not swept up.
   docker exec deluge deluge-list-torrents \
-    | grep "timed out" \
+    | awk -F'\t' '$6 ~ /timed out/' \
     | cut -f1 \
     | docker exec -i deluge deluge-update-tracker
 """
 
+import re
 import sys
 
 try:
@@ -29,6 +31,8 @@ AUTH_FILE = "/config/auth"
 HOST = "127.0.0.1"
 PORT = 58846
 
+HASH_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+
 
 def read_localclient_password(auth_file):
     with open(auth_file) as f:
@@ -39,8 +43,28 @@ def read_localclient_password(auth_file):
     raise RuntimeError(f"localclient entry not found in {auth_file}")
 
 
+def read_hashes():
+    """Read hashes from stdin, rejecting anything that is not a torrent hash."""
+    hashes, bad = [], []
+    for line in sys.stdin:
+        entry = line.strip()
+        if not entry:
+            continue
+        # Tolerate a full TSV row being piped in by accident.
+        entry = entry.split("\t")[0]
+        (hashes if HASH_RE.match(entry) else bad).append(entry)
+
+    if bad:
+        print(f"Error: {len(bad)} input line(s) are not 40-char torrent hashes:", file=sys.stderr)
+        for entry in bad[:10]:
+            print(f"  {entry!r}", file=sys.stderr)
+        sys.exit(1)
+
+    return list(dict.fromkeys(h.lower() for h in hashes))
+
+
 def main():
-    hashes = [line.strip() for line in sys.stdin if line.strip()]
+    hashes = read_hashes()
     if not hashes:
         print("No hashes provided on stdin.", file=sys.stderr)
         sys.exit(1)
@@ -49,9 +73,13 @@ def main():
     client = DelugeRPCClient(HOST, PORT, "localclient", password)
     client.connect()
 
-    client.core.force_reannounce(hashes)
-    for h in hashes:
-        print(f"Updated: {h}")
+    try:
+        client.core.force_reannounce(hashes)
+    finally:
+        client.disconnect()
+
+    for torrent_hash in hashes:
+        print(f"Updated: {torrent_hash}")
 
 
 if __name__ == "__main__":

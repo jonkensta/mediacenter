@@ -4,81 +4,265 @@ Find duplicate files between the Downloads directory and the media library
 (Movies/TV) on a mergerfs pool, and replace the media copy with a hardlink
 to the Downloads copy so both paths share a single copy on disk.
 
+Candidates are matched by size and then verified byte-for-byte before any
+file is touched. Files that are already the same inode are skipped.
+
 Both paths must be on the same underlying branch for a hardlink to work.
 If they are on different branches, the media file is moved to the downloads
 branch first, then hardlinked.
 
 Usage:
-  mergerfs-hardlink-downloads            # dry-run (default, safe)
-  mergerfs-hardlink-downloads --execute  # actually make changes
+  mergerfs-hardlink-downloads              # dry-run (default, safe)
+  mergerfs-hardlink-downloads --execute    # actually make changes
+  mergerfs-hardlink-downloads --clean-tmp  # remove leftover .hlnk_tmp files
 
-Requires Deluge to be stopped before running with --execute.
+The media server must be stopped before running with --execute; the script
+enforces this unless --force is given.
 """
 
-import os
-import sys
 import argparse
+import filecmp
+import glob
+import os
+import subprocess
+import sys
 
 MERGED = "/mnt/merged"
 DOWNLOADS = os.path.join(MERGED, "Downloads")
 MEDIA_DIRS = [os.path.join(MERGED, "Movies"), os.path.join(MERGED, "TV")]
-BRANCHES = [f"/mnt/0{i}" for i in range(8)]
+BRANCH_GLOB = "/mnt/0[0-7]"
 MIN_SIZE = 100 * 1024 * 1024  # ignore files smaller than 100MB
+TMP_SUFFIX = ".hlnk_tmp"
+SERVICE = "mediaserver.service"
 
 
-def find_branch(merged_path):
-    relative = merged_path.removeprefix(MERGED + "/")
-    for branch in BRANCHES:
-        candidate = os.path.join(branch, relative)
-        if os.path.exists(candidate):
-            return branch
-    raise RuntimeError(f"Could not find branch for {merged_path}")
+def discover_branches():
+    """Return the pool's branches, preferring mergerfs' own srcmounts."""
+    try:
+        raw = os.getxattr(MERGED, b"user.mergerfs.srcmounts").decode()
+        branches = [b for b in raw.split(":") if b]
+        if branches:
+            return branches
+    except OSError:
+        pass
+
+    branches = sorted(glob.glob(BRANCH_GLOB))
+    if not branches:
+        raise RuntimeError(f"No branches found; {MERGED} does not look mounted.")
+    print(
+        f"Warning: could not read mergerfs srcmounts, falling back to {BRANCH_GLOB}",
+        file=sys.stderr,
+    )
+    return branches
+
+
+def relative_to_merged(merged_path):
+    """Return merged_path relative to the pool root, refusing anything outside it."""
+    prefix = MERGED + os.sep
+    if not merged_path.startswith(prefix):
+        raise ValueError(f"{merged_path} is not under {MERGED}")
+    return merged_path[len(prefix):]
+
+
+def find_branches(merged_path, branches):
+    """Return every branch holding merged_path, in mergerfs search order."""
+    relative = relative_to_merged(merged_path)
+    return [b for b in branches if os.path.lexists(os.path.join(b, relative))]
 
 
 def branch_path(merged_path, branch):
-    relative = merged_path.removeprefix(MERGED + "/")
-    return os.path.join(branch, relative)
+    """Map a merged path onto a specific branch."""
+    return os.path.join(branch, relative_to_merged(merged_path))
 
 
 def scan(path):
+    """Group files under path by size, ignoring small files and temp artifacts."""
     by_size = {}
-    for dirpath, _, filenames in os.walk(path):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
+
+    def on_error(error):
+        print(f"Warning: cannot read {error.filename}: {error}", file=sys.stderr)
+
+    for dirpath, _, filenames in os.walk(path, onerror=on_error):
+        for name in filenames:
+            if name.endswith(TMP_SUFFIX):
+                continue
+            filepath = os.path.join(dirpath, name)
             try:
-                size = os.stat(fp).st_size
-                if size >= MIN_SIZE:
-                    by_size.setdefault(size, []).append(fp)
-            except OSError:
-                pass
+                stat = os.stat(filepath)
+            except OSError as error:
+                print(f"Warning: cannot stat {filepath}: {error}", file=sys.stderr)
+                continue
+            if stat.st_size >= MIN_SIZE:
+                by_size.setdefault(stat.st_size, []).append(filepath)
     return by_size
 
 
+def find_stale_tmp_files(branches):
+    """Return leftover .hlnk_tmp files from an interrupted run."""
+    stale = []
+    for branch in branches:
+        for media_dir in MEDIA_DIRS:
+            root = os.path.join(branch, relative_to_merged(media_dir))
+            for dirpath, _, filenames in os.walk(root):
+                stale.extend(
+                    os.path.join(dirpath, name)
+                    for name in filenames
+                    if name.endswith(TMP_SUFFIX)
+                )
+    return stale
+
+
+def mediaserver_is_running():
+    """Return True if the media server unit is active."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", SERVICE],
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def same_content(first, second):
+    """Return True if two files hold identical bytes (short-circuits on the first diff)."""
+    return filecmp.cmp(first, second, shallow=False)
+
+
+def match_pairs(downloads_by_size, media_by_size, verify):
+    """Pair each media file with at most one content-identical download."""
+    pairs = []
+    skipped_no_match = 0
+
+    for size, media_paths in sorted(media_by_size.items()):
+        candidates = downloads_by_size.get(size)
+        if not candidates:
+            continue
+
+        for media_path in media_paths:
+            chosen = None
+            for candidate in candidates:
+                try:
+                    if verify and not same_content(candidate, media_path):
+                        continue
+                except OSError as error:
+                    print(
+                        f"Warning: cannot compare {candidate} and {media_path}: {error}",
+                        file=sys.stderr,
+                    )
+                    continue
+                chosen = candidate
+                break
+
+            if chosen is None:
+                skipped_no_match += 1
+                continue
+            pairs.append((size, chosen, media_path))
+
+    return pairs, skipped_no_match
+
+
+def link_same_branch(source, target):
+    """Replace target with a hardlink to source via an atomic rename."""
+    tmp = target + TMP_SUFFIX
+    if os.path.lexists(tmp):
+        raise RuntimeError(f"stale temp file {tmp} (run --clean-tmp)")
+    os.link(source, tmp)
+    try:
+        if not os.path.samefile(source, tmp):
+            raise RuntimeError(f"link verification failed for {tmp}")
+        os.rename(tmp, target)
+    except Exception:
+        # Leave the original target untouched.
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def link_across_branches(source, target, old_copy):
+    """Hardlink source onto the downloads branch, then drop the old branch copy."""
+    if os.path.lexists(target):
+        raise RuntimeError(f"{target} already exists on the target branch")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    os.link(source, target)
+    if not os.path.samefile(source, target):
+        os.remove(target)
+        raise RuntimeError(f"link verification failed for {target}")
+    os.remove(old_copy)
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--execute", action="store_true", help="Apply changes (default is dry-run)")
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--execute", action="store_true", help="Apply changes (default is dry-run)"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=f"Skip the {SERVICE} running check (dangerous)",
+    )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Match on size alone without comparing contents (dangerous)",
+    )
+    parser.add_argument(
+        "--clean-tmp",
+        action="store_true",
+        help=f"Delete leftover *{TMP_SUFFIX} files and exit",
+    )
     args = parser.parse_args()
 
     dry_run = not args.execute
+    verify = not args.no_verify
+    branches = discover_branches()
+
+    if args.clean_tmp:
+        stale = find_stale_tmp_files(branches)
+        for path in stale:
+            print(f"Removing {path}")
+            os.remove(path)
+        print(f"Removed {len(stale)} temp file(s).")
+        return
+
+    if args.execute and not args.force and mediaserver_is_running():
+        sys.exit(
+            f"Refusing to run: {SERVICE} is active. Files may be written while\n"
+            f"this script works, which can hardlink a partial file over a good\n"
+            f"library copy. Stop it first:\n"
+            f"  sudo systemctl stop {SERVICE}\n"
+            f"Use --force to override."
+        )
+
+    stale = find_stale_tmp_files(branches)
+    if stale:
+        sys.exit(
+            f"Found {len(stale)} leftover temp file(s) from an interrupted run.\n"
+            f"Inspect them, then re-run with --clean-tmp:\n  "
+            + "\n  ".join(stale[:10])
+        )
 
     if dry_run:
         print("DRY-RUN mode — no changes will be made. Pass --execute to apply.\n")
+    if not verify:
+        print("WARNING: --no-verify — matching on size alone. This can destroy files.\n")
 
     print("Scanning Downloads...", flush=True)
     downloads_by_size = scan(DOWNLOADS)
 
     print("Scanning Movies and TV...", flush=True)
     media_by_size = {}
-    for d in MEDIA_DIRS:
-        for size, paths in scan(d).items():
+    for media_dir in MEDIA_DIRS:
+        for size, paths in scan(media_dir).items():
             media_by_size.setdefault(size, []).extend(paths)
 
-    pairs = []
-    for size, dl_files in downloads_by_size.items():
-        if size in media_by_size:
-            for dl_path in dl_files:
-                for media_path in media_by_size[size]:
-                    pairs.append((size, dl_path, media_path))
+    print("Comparing candidates...", flush=True)
+    pairs, skipped_no_match = match_pairs(downloads_by_size, media_by_size, verify)
 
     if not pairs:
         print("No duplicates found.")
@@ -87,13 +271,43 @@ def main():
     total_savings = 0
     same_branch_count = 0
     diff_branch_count = 0
+    already_linked = 0
+    skipped_ambiguous = 0
+    failures = []
 
     for size, dl_path, media_path in pairs:
-        dl_branch = find_branch(dl_path)
-        media_branch = find_branch(media_path)
-        dl_branch_path = branch_path(dl_path, dl_branch)
-        same = dl_branch == media_branch
+        try:
+            dl_branches = find_branches(dl_path, branches)
+            media_branches = find_branches(media_path, branches)
+        except (ValueError, OSError) as error:
+            failures.append((media_path, str(error)))
+            continue
 
+        if not dl_branches or not media_branches:
+            failures.append((media_path, "file vanished between scan and action"))
+            continue
+
+        # A path present on several branches means mergerfs is masking a stale
+        # duplicate. Removing one copy would expose the other, so leave it alone.
+        if len(dl_branches) > 1 or len(media_branches) > 1:
+            skipped_ambiguous += 1
+            print(f"SKIP (exists on multiple branches): {media_path}")
+            continue
+
+        dl_branch = dl_branches[0]
+        media_branch = media_branches[0]
+        dl_branch_path = branch_path(dl_path, dl_branch)
+        media_branch_path = branch_path(media_path, media_branch)
+
+        try:
+            if os.path.samefile(dl_branch_path, media_branch_path):
+                already_linked += 1
+                continue
+        except OSError as error:
+            failures.append((media_path, str(error)))
+            continue
+
+        same = dl_branch == media_branch
         if same:
             same_branch_count += 1
             action = "hardlink (same branch)"
@@ -107,30 +321,41 @@ def main():
         print(f"  dst (media):     {media_path}")
 
         if not dry_run:
-            media_branch_path = branch_path(media_path, media_branch)
-            target_branch_path = branch_path(media_path, dl_branch)
-
-            if not same:
-                # Create parent directory on downloads branch if needed
-                os.makedirs(os.path.dirname(target_branch_path), exist_ok=True)
-                # Create hardlink on the downloads branch
-                os.link(dl_branch_path, target_branch_path)
-                # Remove the copy from the other branch
-                os.remove(media_branch_path)
-            else:
-                # Atomic replace: hardlink to a temp name, then rename over the media copy
-                tmp = media_branch_path + ".hlnk_tmp"
-                os.link(dl_branch_path, tmp)
-                os.rename(tmp, media_branch_path)
+            try:
+                if same:
+                    link_same_branch(dl_branch_path, media_branch_path)
+                else:
+                    link_across_branches(
+                        dl_branch_path,
+                        branch_path(media_path, dl_branch),
+                        media_branch_path,
+                    )
+            except (OSError, RuntimeError) as error:
+                failures.append((media_path, str(error)))
+                print(f"  FAILED: {error}", file=sys.stderr)
 
         print()
 
-    print(f"Duplicates found:  {len(pairs)}")
+    print(f"Duplicates found:  {len(pairs) - already_linked}")
     print(f"  Same branch:     {same_branch_count}")
     print(f"  Diff branch:     {diff_branch_count}")
+    print(f"Already hardlinked: {already_linked} (no savings available)")
+    if skipped_ambiguous:
+        print(f"Skipped (multi-branch): {skipped_ambiguous}")
+    if skipped_no_match:
+        print(f"Skipped (size matched, contents differed): {skipped_no_match}")
     print(f"Space reclaimable: {total_savings / 1e9:.2f} GB")
+
+    if failures:
+        print(f"\n{len(failures)} failure(s):", file=sys.stderr)
+        for path, error in failures:
+            print(f"  {path}: {error}", file=sys.stderr)
+
     if dry_run:
         print("\nRe-run with --execute to apply changes.")
+
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

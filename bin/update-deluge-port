@@ -1,12 +1,73 @@
 #!/bin/bash
-set -e
+# Read the forwarded port from Gluetun and set it as Deluge's listen port.
+#
+# Credentials are never passed on the host command line (they would show up in
+# `ps` and shell history):
+#   - The Gluetun API key comes from $GLUETUN_API_KEY or $GLUETUN_API_KEY_FILE
+#     (default /etc/mediaserver/gluetun-api-key, mode 0600) and is piped in via
+#     stdin.
+#   - The Deluge daemon password is read inside the container from /config/auth,
+#     the same way the deluge-* helper scripts do it.
 
-PORT=$(docker exec gluetun wget -qO- --header='X-API-Key: 8NVHkJxXiaSszwvQghrJhX' http://localhost:8000/v1/portforward | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+set -euo pipefail
 
-if [ -z "$PORT" ] || [ "$PORT" -eq 0 ]; then
-    echo "Error: could not get forwarded port from gluetun (got: ${PORT:-empty})" >&2
+GLUETUN_CONTAINER="${GLUETUN_CONTAINER:-gluetun}"
+DELUGE_CONTAINER="${DELUGE_CONTAINER:-deluge}"
+GLUETUN_API_KEY_FILE="${GLUETUN_API_KEY_FILE:-/etc/mediaserver/gluetun-api-key}"
+
+api_key="${GLUETUN_API_KEY:-}"
+if [ -z "$api_key" ] && [ -r "$GLUETUN_API_KEY_FILE" ]; then
+    api_key=$(tr -d '[:space:]' < "$GLUETUN_API_KEY_FILE")
+fi
+
+if [ -z "$api_key" ]; then
+    echo "Error: no Gluetun API key found." >&2
+    echo "Set GLUETUN_API_KEY, or write it to $GLUETUN_API_KEY_FILE:" >&2
+    echo "  sudo install -Dm600 /dev/stdin $GLUETUN_API_KEY_FILE <<< 'your-key'" >&2
     exit 1
 fi
 
-docker exec deluge deluge-console -U localclient -P 574bfec57c6428e511b86ad7c4a98998f3889fde "config -s listen_ports [$PORT,$PORT]"
-echo "Deluge listen port set to $PORT"
+response=$(printf '%s\n' "$api_key" | docker exec -i "$GLUETUN_CONTAINER" sh -c '
+    read -r key
+    wget -qO- --header="X-API-Key: $key" http://localhost:8000/v1/portforward
+') || {
+    echo "Error: could not reach the Gluetun control server." >&2
+    exit 1
+}
+
+port=$(printf '%s' "$response" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin)["port"])
+except (ValueError, KeyError, TypeError):
+    pass
+')
+
+if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo "Error: no valid forwarded port from gluetun (response: ${response:-empty})" >&2
+    exit 1
+fi
+
+# Everything below runs inside the container so the daemon password never
+# reaches the host's process list.
+docker exec -i "$DELUGE_CONTAINER" sh -c '
+set -eu
+port=$1
+
+password=$(grep "^localclient:" /config/auth | head -1 | cut -d: -f2)
+if [ -z "$password" ]; then
+    echo "Error: localclient entry not found in /config/auth" >&2
+    exit 1
+fi
+
+current=$(deluge-console -U localclient -P "$password" "config listen_ports" 2>/dev/null \
+    | grep -o "[0-9][0-9]*" | head -1 || true)
+
+if [ "$current" = "$port" ]; then
+    echo "Deluge listen port already $port; nothing to do."
+    exit 0
+fi
+
+deluge-console -U localclient -P "$password" "config -s listen_ports [$port,$port]"
+echo "Deluge listen port set to $port (was ${current:-unknown})"
+' _ "$port"

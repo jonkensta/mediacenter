@@ -27,48 +27,35 @@ def main():
         help="Path to the serial device.",
     )
 
-    subparsers = parser.add_subparsers(title='Commands', dest='command')
+    subparsers = parser.add_subparsers(title='Commands', dest='command', required=True)
     subparsers.add_parser("test", description="Test the serial communication.")
     subparsers.add_parser("open", description="Open the USB relay.")
     subparsers.add_parser("close", description="Close the USB relay.")
     args = parser.parse_args()
 
     if not args.port.is_char_device():
-        msg = "Given device filepath does not exist or is not a char device."
-        raise argparse.ArgumentError(None, msg)
+        parser.error("Given device filepath does not exist or is not a char device.")
 
     port = str(args.port)
     with serial.Serial(port, args.baudrate, timeout=args.timeout) as sio:
 
-        def test() -> bool:
-            sio.write(b"AT")
-            response = sio.readline().strip()
-            return response == b"OK"
-
-        def close() -> bool:
-            sio.write(b"AT+CH1=1")
-            response = sio.readline().strip()
-            return response == b"OK+CH1=1"
-
-        def open_() -> bool:
-            sio.write(b"AT+CH1=0")
-            response = sio.readline().strip()
-            return response == b"OK+CH1=0"
+        def command(request: bytes, expected: bytes) -> bool:
+            # Drop anything left over from a previous session, otherwise a stale
+            # reply is read as this command's response and the result is a lie.
+            sio.reset_input_buffer()
+            sio.write(request)
+            return sio.readline().strip() == expected
 
         commands = {
-            "test": test,
-            "close": close,
-            "open": open_,
+            "test": lambda: command(b"AT", b"OK"),
+            "close": lambda: command(b"AT+CH1=1", b"OK+CH1=1"),
+            "open": lambda: command(b"AT+CH1=0", b"OK+CH1=0"),
         }
 
-        try:
-            command = commands[args.command]
-        except KeyError as error:
-            raise ValueError(f"Unsupported command {args.command}.") from error
-
-        success = command()
-        if not success:
-            raise serial.SerialException("Unexpected response from device.")
+        if not commands[args.command]():
+            raise serial.SerialException(
+                f"Unexpected response from device for command '{args.command}'."
+            )
 
 
 if __name__ == "__main__":

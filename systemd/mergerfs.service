@@ -5,7 +5,6 @@ Requires=mount-das.service
 
 [Service]
 Type=simple
-KillMode=none
 ExecStart=/usr/bin/mergerfs \
   -f \
   -o cache.files=partial \
@@ -13,8 +12,13 @@ ExecStart=/usr/bin/mergerfs \
   -o category.create=epmfs \
   /mnt/00:/mnt/01:/mnt/02:/mnt/03:/mnt/04:/mnt/05:/mnt/06:/mnt/07 \
   /mnt/merged
-ExecStop=/bin/fusermount -uz /mnt/merged
+# Wait for the mount to be live before dependants start; with Type=simple
+# systemd would otherwise consider the unit started the instant it forks.
+ExecStartPost=/usr/bin/sh -c 'for i in $$(seq 1 100); do /usr/bin/mountpoint -q /mnt/merged && exit 0; sleep 0.1; done; exit 1'
+# Not a lazy unmount: -uz detaches while FDs are still open, which leaves a
+# stray FUSE process holding the branches and makes mount-das's unmounts fail.
+ExecStop=/usr/bin/fusermount -u /mnt/merged
 Restart=on-failure
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

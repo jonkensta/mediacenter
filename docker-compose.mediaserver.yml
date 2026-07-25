@@ -20,8 +20,10 @@ services:
     ports:
       - 2222:2222/tcp
     restart: unless-stopped
+    # Internet-facing tarpit: frontend only, so it cannot reach Deluge RPC,
+    # the *arr APIs, or Gluetun's control server.
     networks:
-      - mediaserver
+      - frontend
 
   radarr:
     image: lscr.io/linuxserver/radarr:latest
@@ -175,14 +177,26 @@ services:
       - mediaserver
 
   cloudflare-ddns:
-    image: oznu/cloudflare-ddns:latest
+    # Replaces oznu/cloudflare-ddns, which has been archived upstream for years.
+    # This one takes a scoped API token (Zone.DNS:Edit + Zone.Zone:Read on the
+    # zone) rather than a Global API key.
+    image: favonia/cloudflare-ddns:1
     container_name: cloudflare-ddns
     restart: unless-stopped
+    user: "1012:1012"
+    cap_drop:
+      - ALL
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
     environment:
-      - API_KEY=YOUR_CLOUDFLARE_API_KEY
-      - ZONE=jstarr.me
-      - SUBDOMAIN=
+      - CLOUDFLARE_API_TOKEN=YOUR_CLOUDFLARE_API_TOKEN
+      - DOMAINS=jstarr.me
       - PROXIED=false
+      # Without this it probes for IPv6 on every run and logs errors on an
+      # IPv4-only host. Set to "auto" if this host does have IPv6.
+      - IP6_PROVIDER=none
+      - TZ=America/Chicago
     networks:
       - mediaserver
 
@@ -211,9 +225,17 @@ services:
       - 80:80
       - 443:443
     restart: unless-stopped
+    # The only container on both networks: it terminates TLS on frontend and
+    # proxies through to the services on mediaserver.
     networks:
+      - frontend
       - mediaserver
 
 networks:
+  # Shared with docker-compose.pihole.yml, so it is created out-of-band:
+  #   docker network create mediaserver
   mediaserver:
     external: true
+  # Internet-facing tier (swag, endlessh). Compose manages this one.
+  frontend:
+    driver: bridge

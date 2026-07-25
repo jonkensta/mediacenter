@@ -3,29 +3,26 @@
 """Script for awaiting block devices with optional power management."""
 
 import argparse
-import asyncio
 import logging
 import pathlib
+import signal
 import subprocess
 import sys
+import time
 
 import pyudev
 
 logger = logging.getLogger(__name__)
 
 
-def is_block_device_available(context: pyudev.Context, device_uuid: str) -> bool:
-    """Check if block device with UUID device_uuid is available."""
-    for device in context.list_devices(subsystem="block"):
-        if device.properties.get("ID_FS_UUID") == device_uuid:
-            return True
-    return False
-
-
-def all_devices_available(device_uuids: list[str]) -> bool:
-    """Check if all block devices are available."""
+def present_uuids() -> set[str]:
+    """Return the filesystem UUIDs of every block device currently known to udev."""
     context = pyudev.Context()
-    return all(is_block_device_available(context, uuid) for uuid in device_uuids)
+    return {
+        uuid
+        for device in context.list_devices(subsystem="block")
+        if (uuid := device.properties.get("ID_FS_UUID"))
+    }
 
 
 def power_on_das(relay_device: pathlib.Path):
@@ -43,33 +40,42 @@ def power_on_das(relay_device: pathlib.Path):
 
 
 class DeviceTimeoutError(Exception):
-    """Exception raised operation fails."""
+    """Raised when one or more devices did not appear before the timeout."""
 
 
-async def await_block_device(
-    device_uuid: str,
+def await_block_devices(
+    device_uuids: list[str],
     poll_interval: float = 5.0,
     timeout: float = 60.0,
 ):
-    """Await device of given UUID."""
-    start_time = 0
-    context = pyudev.Context()
-    while not is_block_device_available(context, device_uuid):
-        elapsed = start_time
-        remaining = timeout - elapsed
+    """Wait until every UUID in device_uuids is present, or raise on timeout.
+
+    One udev enumeration serves all UUIDs per poll, and the deadline is measured
+    against a monotonic clock so slow enumerations cannot overshoot the timeout.
+    """
+    outstanding = set(device_uuids)
+    deadline = time.monotonic() + timeout
+
+    while True:
+        outstanding -= present_uuids()
+        if not outstanding:
+            logger.info("All devices are available.")
+            return
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DeviceTimeoutError(
+                "Timed out waiting for device(s): " + ", ".join(sorted(outstanding))
+            )
+
         logger.info(
-            "Waiting for device '%s' (%.1fs elapsed, %.1fs remaining)...",
-            device_uuid, elapsed, remaining
+            "Waiting for %d device(s) (%.1fs remaining): %s",
+            len(outstanding), remaining, ", ".join(sorted(outstanding)),
         )
-        await asyncio.sleep(poll_interval)
-        start_time += poll_interval
-        if start_time >= timeout:
-            raise DeviceTimeoutError(f"Device '{device_uuid}' timed out.")
-
-    logger.info("Device '%s' is available", device_uuid)
+        time.sleep(min(poll_interval, remaining))
 
 
-async def main():
+def main():
     """Await block devices of given UUIDs with optional power management."""
 
     parser = argparse.ArgumentParser(description=main.__doc__)
@@ -99,37 +105,30 @@ async def main():
 
     # If relay device specified, check if we need to power on
     if args.relay_device:
-        if all_devices_available(args.uuids):
+        if set(args.uuids) <= present_uuids():
             logger.info("All devices already available, skipping power on")
         else:
             logger.info("Devices not available, powering on DAS")
             power_on_das(args.relay_device)
 
-    # Wait for all devices
-    tasks = [
-        await_block_device(device_uuid, args.poll_interval, args.timeout)
-        for device_uuid in args.uuids
-    ]
+    await_block_devices(args.uuids, args.poll_interval, args.timeout)
 
-    exceptions = await asyncio.gather(*tasks, return_exceptions=True)
-    exceptions = [exception for exception in exceptions if exception is not None]
-    for exception in exceptions:
-        logger.error(str(exception))
 
-    if exceptions:
-        raise DeviceTimeoutError("One or more devices timed out.")
-
-    logger.info("All devices are available.")
+def _terminate(signum, _frame):
+    """Exit non-zero on SIGTERM so systemd sees an interrupted run as failed."""
+    logger.info("Received signal %d, exiting...", signum)
+    sys.exit(128 + signum)
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    signal.signal(signal.SIGTERM, _terminate)
 
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
-        logger.info("Exiting...")
-        sys.exit(0)
+        logger.info("Interrupted.")
+        sys.exit(130)
     except Exception as e:  # pylint: disable=broad-except
         logger.error(str(e))
         sys.exit(1)

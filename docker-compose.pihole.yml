@@ -9,10 +9,12 @@ services:
       - PUID=1012
       - PGID=1012
       - TZ=America/Chicago
-      - WEBPASSWORD=YOUR_PIHOLE_PASSWORD
-      - VIRTUAL_HOST=pihole.jstarr.me
+      # Pi-hole v6 replaced WEBPASSWORD with FTLCONF_webserver_api_password.
+      # On v6 the old variable is ignored and the admin password is randomised
+      # into the container log on first start.
+      - FTLCONF_webserver_api_password=YOUR_PIHOLE_PASSWORD
     volumes:
-      - ./pihole/config:/etc/pihole
+      - ./config:/etc/pihole
     cap_add:
       - SYS_NICE
     restart: unless-stopped

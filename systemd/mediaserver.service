@@ -1,15 +1,27 @@
 [Unit]
 Description=mediaserver service with docker compose
-Requires=docker.service mergerfs.service
+Requires=docker.service
 After=docker.service mergerfs.service
+# Stronger than Requires=: if the pool goes away, stop the stack rather than let
+# containers keep writing into an empty /mnt/merged on the root filesystem.
+# Note the trade-off - after a mergerfs failure the stack stays down until it is
+# started again, instead of silently running against the wrong filesystem.
+BindsTo=mergerfs.service
 
 [Service]
+Type=exec
 WorkingDirectory=/opt/mediaserver
+# `docker compose pull` runs inside the start timeout and can move multiple GB;
+# the default 90s would kill the unit mid-pull.
+TimeoutStartSec=1800
+# The compose file declares this network as external, so it must already exist.
+ExecStartPre=-/usr/bin/docker network create mediaserver
 ExecStartPre=-/usr/bin/docker compose pull
 ExecStart=/usr/bin/docker compose up --remove-orphans
 ExecStop=/usr/bin/docker compose down
-ExecReload=/usr/bin/docker compose pull
-ExecReload=/usr/bin/docker compose up --remove-orphans
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target

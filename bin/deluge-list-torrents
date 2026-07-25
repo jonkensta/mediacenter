@@ -4,6 +4,9 @@ List all torrents from Deluge as TSV on stdout.
 
 Columns: hash, name, size, label, tracker, tracker_status
 
+Tabs and newlines in torrent names are replaced with spaces so downstream
+`cut -f1` pipelines cannot be desynchronised by a hostile release name.
+
 Intended to run inside the deluge container:
   docker exec deluge deluge-list-torrents
 
@@ -14,8 +17,10 @@ Examples:
   # Show all torrents
   docker exec deluge deluge-list-torrents
 
-  # Filter by tracker status
-  docker exec deluge deluge-list-torrents | grep "not registered"
+  # Filter on the tracker_status COLUMN, not the whole line. Matching the whole
+  # line means a release named "Not.Registered.2024" matches too - dangerous
+  # when piping into deluge-remove-torrent.
+  docker exec deluge deluge-list-torrents | awk -F'\t' '$6 ~ /not registered/'
 
   # Interactive picker (fzf) showing name/size/label/status, hash hidden
   docker exec deluge deluge-list-torrents | fzf -m --with-nth=2..
@@ -36,6 +41,8 @@ AUTH_FILE = "/config/auth"
 HOST = "127.0.0.1"
 PORT = 58846
 
+FIELDS = ["name", "total_size", "label", "tracker", "tracker_status"]
+
 
 def read_localclient_password(auth_file):
     with open(auth_file) as f:
@@ -54,25 +61,34 @@ def human_size(num_bytes):
     return f"{num_bytes:.1f} PB"
 
 
+def clean(value):
+    """Flatten a field to a single TSV-safe cell."""
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    return " ".join(str(value).split())
+
+
 def main():
     password = read_localclient_password(AUTH_FILE)
     client = DelugeRPCClient(HOST, PORT, "localclient", password)
     client.connect()
 
-    torrents = client.core.get_torrents_status(
-        {}, ["name", "total_size", "label", "tracker", "tracker_status"]
-    )
+    try:
+        torrents = client.core.get_torrents_status({}, FIELDS)
 
-    for tid, info in torrents.items():
-        fields = [
-            tid.decode(),
-            info[b"name"].decode(),
-            human_size(info[b"total_size"]),
-            info[b"label"].decode(),
-            info[b"tracker"].decode(),
-            info[b"tracker_status"].decode(),
-        ]
-        print("\t".join(fields))
+        for tid, info in torrents.items():
+            # `label` is absent unless the Label plugin is enabled.
+            fields = [
+                clean(tid),
+                clean(info.get(b"name", b"")),
+                human_size(info.get(b"total_size", 0)),
+                clean(info.get(b"label", b"")),
+                clean(info.get(b"tracker", b"")),
+                clean(info.get(b"tracker_status", b"")),
+            ]
+            print("\t".join(fields))
+    finally:
+        client.disconnect()
 
 
 if __name__ == "__main__":
