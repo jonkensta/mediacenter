@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Rebalance mergerfs branches by moving hardlink-closed groups of files.
+
+Moves whole top-level items (Movies/<dir>, TV/<dir>, Downloads/<item>, ...)
+from over-full source branches to a target branch until every branch sits at
+roughly the same percent-used. Items connected by hardlinks are moved together
+in a single `rsync -aH` run so links survive the move; groups whose links
+cannot be fully accounted for are never touched.
+
+Run with the mediaserver stack stopped so branches are quiescent. Must run as
+root (source trees are not group-writable); rsync -a preserves media:media
+ownership so no chown pass is needed afterwards.
+
+Safety behaviour:
+- Dry-run by default; --execute to actually move.
+- A group is skipped if any of its multi-link inodes has links outside the
+  scanned top dirs (deleting the moved paths would leave a hidden copy).
+- A group is skipped if any of its items already exists on the target branch
+  (never merge/overwrite silently).
+- After each rsync, a no-op verify pass (`rsync -aHn`) must report nothing to
+  transfer before any source file is deleted.
+- Free space on the target is checked before each group.
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+TOP_DIRS = ("Movies", "TV", "Downloads", "Music")
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def fail(msg):
+    print(f"ERROR: {msg}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+
+class Item:
+    """One movable top-level item, e.g. Movies/Foo (dir) or Downloads/x.mkv."""
+
+    def __init__(self, rel):
+        self.rel = rel            # path relative to branch root
+        self.single_bytes = 0     # bytes in files with st_nlink == 1
+        self.multi_inodes = set() # inodes of files with st_nlink > 1
+
+
+def scan_branch(branch):
+    """Walk one branch; return (items{rel: Item}, inode -> (size, nlink, [item rels]))."""
+    items = {}
+    inodes = {}
+    for top in TOP_DIRS:
+        top_path = os.path.join(branch, top)
+        if not os.path.isdir(top_path):
+            continue
+        for entry in os.scandir(top_path):
+            rel = f"{top}/{entry.name}"
+            item = items[rel] = Item(rel)
+            if entry.is_file(follow_symlinks=False):
+                st = entry.stat(follow_symlinks=False)
+                record_file(item, inodes, st)
+                continue
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            for root, _dirs, files in os.walk(entry.path):
+                for name in files:
+                    try:
+                        st = os.lstat(os.path.join(root, name))
+                    except FileNotFoundError:
+                        continue
+                    if not os.path.isfile(os.path.join(root, name)):
+                        continue
+                    record_file(item, inodes, st)
+    return items, inodes
+
+
+def record_file(item, inodes, st):
+    if st.st_nlink > 1:
+        item.multi_inodes.add(st.st_ino)
+        size, nlink, rels = inodes.setdefault(st.st_ino, (st.st_size, st.st_nlink, []))
+        rels.append(item.rel)
+    else:
+        item.single_bytes += st.st_size
+
+
+def build_groups(items, inodes):
+    """Union items sharing inodes. Returns list of (item rels, freed_bytes, movable)."""
+    parent = {rel: rel for rel in items}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    unaccounted = set()  # inodes with links we did not observe
+    for ino, (_size, nlink, rels) in inodes.items():
+        for rel in rels[1:]:
+            union(rels[0], rel)
+        if len(rels) != nlink:
+            unaccounted.add(ino)
+
+    groups = {}
+    for rel in items:
+        groups.setdefault(find(rel), []).append(rel)
+
+    result = []
+    for rels in groups.values():
+        freed = sum(items[r].single_bytes for r in rels)
+        group_inodes = set().union(*(items[r].multi_inodes for r in rels))
+        freed += sum(inodes[i][0] for i in group_inodes)
+        movable = not (group_inodes & unaccounted)
+        result.append((sorted(rels), freed, movable))
+    return result
+
+
+def pick_groups(groups, quota):
+    """Greedy: largest movable groups first until quota is met."""
+    chosen, total = [], 0
+    for rels, freed, movable in sorted(groups, key=lambda g: -g[1]):
+        if not movable:
+            continue
+        if total >= quota:
+            break
+        if total + freed > quota * 1.10 and freed > quota * 0.10:
+            continue  # would overshoot badly; try smaller groups
+        chosen.append((rels, freed))
+        total += freed
+    return chosen, total
+
+
+def target_free_bytes(target):
+    st = os.statvfs(target)
+    return st.f_bavail * st.f_frsize
+
+
+def move_group(branch, target, rels, freed, execute):
+    sources = [os.path.join(branch, ".", rel) for rel in rels]
+    for rel in rels:
+        dest = os.path.join(target, rel)
+        if os.path.lexists(dest):
+            log(f"  SKIP group: target already has {dest}")
+            return 0
+    if not execute:
+        for rel in rels:
+            log(f"  would move {branch}/{rel}")
+        return freed
+
+    if target_free_bytes(target) < freed + 50 * 2**30:
+        fail(f"target {target} would drop below 50G free; aborting")
+
+    t0 = time.monotonic()
+    subprocess.run(["rsync", "-aH", "--relative", *sources, target + "/"], check=True)
+    verify = subprocess.run(
+        ["rsync", "-aHn", "--relative", "--itemize-changes", *sources, target + "/"],
+        capture_output=True, text=True, check=True)
+    # Directory-only lines (mtime touch-ups) are harmless; any file line is not.
+    diffs = [l for l in verify.stdout.splitlines() if l and not l.startswith("cd") and not l.startswith(".d")]
+    if diffs:
+        fail(f"verify pass shows differences after rsync of {rels}: {diffs[:5]}")
+
+    for rel in rels:
+        src = os.path.join(branch, rel)
+        if os.path.isdir(src) and not os.path.islink(src):
+            shutil.rmtree(src)
+        else:
+            os.remove(src)
+    dt = time.monotonic() - t0
+    log(f"  moved {freed/2**30:.1f}G in {dt/60:.1f}min ({freed/2**20/max(dt,1):.0f} MB/s)")
+    return freed
+
+
+def branch_usage(path):
+    st = os.statvfs(path)
+    size = st.f_blocks * st.f_frsize
+    used = (st.f_blocks - st.f_bfree) * st.f_frsize
+    return size, used
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--target", required=True, help="branch to move data onto")
+    ap.add_argument("--sources", nargs="+", required=True, help="branches to shed data from")
+    ap.add_argument("--execute", action="store_true", help="actually move (default: dry-run)")
+    args = ap.parse_args()
+
+    if args.execute and os.geteuid() != 0:
+        fail("--execute requires root")
+    if args.execute:
+        state = subprocess.run(["systemctl", "is-active", "--quiet", "mediaserver.service"])
+        if state.returncode == 0:
+            fail("mediaserver.service is active; stop it first")
+        if os.path.ismount("/mnt/merged"):
+            fail("/mnt/merged is mounted; stop mergerfs.service first")
+
+    branches = args.sources + [args.target]
+    for b in branches:
+        if not os.path.ismount(b):
+            fail(f"{b} is not a mountpoint")
+
+    total_size = total_used = 0
+    for b in branches:
+        size, used = branch_usage(b)
+        total_size += size
+        total_used += used
+    target_pct = total_used / total_size
+    log(f"pool: {total_used/2**40:.2f}T used of {total_size/2**40:.2f}T "
+        f"-> target {target_pct*100:.1f}% per branch")
+
+    grand_total = 0
+    for branch in args.sources:
+        size, used = branch_usage(branch)
+        quota = used - target_pct * size
+        if quota < 10 * 2**30:
+            log(f"{branch}: at {used/size*100:.1f}%, within 10G of target - nothing to do")
+            continue
+        log(f"{branch}: {used/size*100:.1f}% used, shedding {quota/2**30:.0f}G ...")
+        items, inodes = scan_branch(branch)
+        groups = build_groups(items, inodes)
+        skipped = sum(1 for _r, _f, m in groups if not m)
+        if skipped:
+            log(f"  ({skipped} groups pinned by links outside {'/'.join(TOP_DIRS)})")
+        chosen, total = pick_groups(groups, quota)
+        log(f"  plan: {len(chosen)} groups, {total/2**30:.0f}G")
+        moved = 0
+        for rels, freed in chosen:
+            moved += move_group(branch, args.target, rels, freed, args.execute)
+        verb = "moved" if args.execute else "would move"
+        log(f"{branch}: {verb} {moved/2**30:.0f}G")
+        grand_total += moved
+
+    verb = "moved" if args.execute else "would move"
+    log(f"done: {verb} {grand_total/2**30:.0f}G total to {args.target}")
+
+
+if __name__ == "__main__":
+    main()
