@@ -10,6 +10,8 @@ Type=oneshot
 # await-block-devices is given --timeout 180; the default 90s start timeout
 # would kill the unit before its own timeout could ever be reached.
 TimeoutStartSec=300
+# 7-drive layout since 2026-08: the two failed 4TB HGSTs (old /mnt/05 and
+# /mnt/06) are retired; a 12TB WD120EMFZ took the /mnt/05 slot.
 ExecStart=/usr/local/bin/await-block-devices \
               --relay-device /dev/ttyUSB0 \
               --timeout 180 \
@@ -18,8 +20,7 @@ ExecStart=/usr/local/bin/await-block-devices \
               1307fc22-3f19-4692-a547-c8325b96a30a \
               6184078e-d973-4894-b41d-bb03e18c8a4b \
               019981e1-9a2c-4935-8d4f-7274379fbb04 \
-              eec7cab2-45a8-4c17-9533-6f4f53a5155f \
-              d6bec5ce-c2a7-498f-8631-d4e983df61ee \
+              b93e6ac1-c300-4211-8ef8-da189bf3ae84 \
               ee1dd6be-94ad-4247-baf5-66a17dbc67df
 # Mount failures must fail the unit so Restart=on-failure power-cycles the DAS.
 # The mountpoint guard keeps each line idempotent across retries.
@@ -28,8 +29,7 @@ ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/01 || mount -U 22d20912-fb50-4d
 ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/02 || mount -U 1307fc22-3f19-4692-a547-c8325b96a30a /mnt/02'
 ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/03 || mount -U 6184078e-d973-4894-b41d-bb03e18c8a4b /mnt/03'
 ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/04 || mount -U 019981e1-9a2c-4935-8d4f-7274379fbb04 /mnt/04'
-ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/05 || mount -U eec7cab2-45a8-4c17-9533-6f4f53a5155f /mnt/05'
-ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/06 || mount -U d6bec5ce-c2a7-498f-8631-d4e983df61ee /mnt/06'
+ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/05 || mount -U b93e6ac1-c300-4211-8ef8-da189bf3ae84 /mnt/05'
 ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/07 || mount -U ee1dd6be-94ad-4247-baf5-66a17dbc67df /mnt/07'
 # Unmount only what is actually mounted (so this still succeeds after a failed
 # start), but fail on a genuine busy/error unmount. A failure here aborts the

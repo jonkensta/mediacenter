@@ -10,7 +10,7 @@ ExecStart=/usr/bin/mergerfs \
   -o cache.files=partial \
   -o dropcacheonclose=true \
   -o category.create=epmfs \
-  /mnt/00:/mnt/01:/mnt/02:/mnt/03:/mnt/04:/mnt/05:/mnt/06:/mnt/07 \
+  /mnt/00:/mnt/01:/mnt/02:/mnt/03:/mnt/04:/mnt/05:/mnt/07 \
   /mnt/merged
 # Wait for the mount to be live before dependants start; with Type=simple
 # systemd would otherwise consider the unit started the instant it forks.
