@@ -131,7 +131,37 @@ def same_content(first, second):
     return filecmp.cmp(first, second, shallow=False)
 
 
-def match_pairs(downloads_by_size, media_by_size, verify):
+FAST_EDGE = 4 * 1024 * 1024      # bytes compared at each end of the file
+FAST_BLOCK = 1024 * 1024         # interior sample block size
+FAST_SAMPLES = 16                # number of interior sample blocks
+
+
+def sampled_same_content(first, second, size):
+    """Probabilistic equality: compare head, tail, and evenly spaced interior blocks.
+
+    Reads ~24MB per file regardless of size. Two different media files of
+    identical size will essentially always differ in these regions, but this
+    is not proof - a file differing only inside an unsampled window would be
+    missed. Small files are compared in full.
+    """
+    if size <= 2 * FAST_EDGE + FAST_SAMPLES * FAST_BLOCK:
+        return same_content(first, second)
+    span = size - 2 * FAST_EDGE - FAST_BLOCK
+    offsets = [0, size - FAST_EDGE]
+    lengths = [FAST_EDGE, FAST_EDGE]
+    for i in range(FAST_SAMPLES):
+        offsets.append(FAST_EDGE + span * i // (FAST_SAMPLES - 1))
+        lengths.append(FAST_BLOCK)
+    with open(first, "rb") as f1, open(second, "rb") as f2:
+        for offset, length in zip(offsets, lengths):
+            f1.seek(offset)
+            f2.seek(offset)
+            if f1.read(length) != f2.read(length):
+                return False
+    return True
+
+
+def match_pairs(downloads_by_size, media_by_size, compare_fn):
     """Pair each media file with at most one content-identical download."""
     pairs = []
     skipped_no_match = 0
@@ -148,8 +178,8 @@ def match_pairs(downloads_by_size, media_by_size, verify):
             chosen = None
             for candidate in candidates:
                 try:
-                    if verify:
-                        identical = same_content(candidate, media_path)
+                    if compare_fn:
+                        identical = compare_fn(candidate, media_path, size)
                         comparisons += 1
                         if identical:
                             duplicate_bytes += size
@@ -230,6 +260,12 @@ def main():
         help="Match on size alone without comparing contents (dangerous)",
     )
     parser.add_argument(
+        "--fast-verify",
+        action="store_true",
+        help="Compare head, tail, and sampled interior blocks (~24MB/file) "
+        "instead of every byte. Fast and near-certain, but not proof.",
+    )
+    parser.add_argument(
         "--clean-tmp",
         action="store_true",
         help=f"Delete leftover *{TMP_SUFFIX} files and exit",
@@ -237,7 +273,12 @@ def main():
     args = parser.parse_args()
 
     dry_run = not args.execute
-    verify = not args.no_verify
+    if args.no_verify:
+        compare_fn = None
+    elif args.fast_verify:
+        compare_fn = sampled_same_content
+    else:
+        compare_fn = lambda first, second, _size: same_content(first, second)
     branches = discover_branches()
 
     if args.clean_tmp:
@@ -267,8 +308,10 @@ def main():
 
     if dry_run:
         print("DRY-RUN mode — no changes will be made. Pass --execute to apply.\n")
-    if not verify:
+    if args.no_verify:
         print("WARNING: --no-verify — matching on size alone. This can destroy files.\n")
+    elif args.fast_verify:
+        print("Fast verify: sampling ~24MB per file instead of full compare.\n")
 
     print("Scanning Downloads...", flush=True)
     downloads_by_size = scan(DOWNLOADS)
@@ -280,7 +323,7 @@ def main():
             media_by_size.setdefault(size, []).extend(paths)
 
     print("Comparing candidates...", flush=True)
-    pairs, skipped_no_match = match_pairs(downloads_by_size, media_by_size, verify)
+    pairs, skipped_no_match = match_pairs(downloads_by_size, media_by_size, compare_fn)
 
     if not pairs:
         print("No duplicates found.")
