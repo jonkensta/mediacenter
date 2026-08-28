@@ -26,6 +26,7 @@ import glob
 import os
 import subprocess
 import sys
+import time
 
 MERGED = "/mnt/merged"
 DOWNLOADS = os.path.join(MERGED, "Downloads")
@@ -134,6 +135,9 @@ def match_pairs(downloads_by_size, media_by_size, verify):
     """Pair each media file with at most one content-identical download."""
     pairs = []
     skipped_no_match = 0
+    comparisons = 0
+    duplicate_bytes = 0
+    last_report = time.monotonic()
 
     for size, media_paths in sorted(media_by_size.items()):
         candidates = downloads_by_size.get(size)
@@ -144,8 +148,21 @@ def match_pairs(downloads_by_size, media_by_size, verify):
             chosen = None
             for candidate in candidates:
                 try:
-                    if verify and not same_content(candidate, media_path):
-                        continue
+                    if verify:
+                        identical = same_content(candidate, media_path)
+                        comparisons += 1
+                        if identical:
+                            duplicate_bytes += size
+                        if time.monotonic() - last_report > 60:
+                            print(
+                                f"progress: {comparisons} comparison(s), "
+                                f"{len(pairs)} duplicate(s) "
+                                f"({duplicate_bytes / 1e9:.0f} GB) so far",
+                                flush=True,
+                            )
+                            last_report = time.monotonic()
+                        if not identical:
+                            continue
                 except OSError as error:
                     print(
                         f"Warning: cannot compare {candidate} and {media_path}: {error}",
