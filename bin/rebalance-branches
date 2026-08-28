@@ -144,6 +144,157 @@ def target_free_bytes(target):
     return st.f_bavail * st.f_frsize
 
 
+FAST_EDGE = 4 * 1024 * 1024      # bytes compared at each end of the file
+FAST_BLOCK = 1024 * 1024         # interior sample block size
+FAST_SAMPLES = 16                # number of interior sample blocks
+
+
+def sampled_identical(first, second, size):
+    """Sampled equality check: head, tail, and evenly spaced interior blocks.
+
+    Near-certain for real media files but not proof; small files are compared
+    in full. Callers must have already established equal sizes.
+    """
+    small = size <= 2 * FAST_EDGE + FAST_SAMPLES * FAST_BLOCK
+    if small:
+        offsets, lengths = [0], [size]
+    else:
+        span = size - 2 * FAST_EDGE - FAST_BLOCK
+        offsets = [0, size - FAST_EDGE]
+        lengths = [FAST_EDGE, FAST_EDGE]
+        for i in range(FAST_SAMPLES):
+            offsets.append(FAST_EDGE + span * i // (FAST_SAMPLES - 1))
+            lengths.append(FAST_BLOCK)
+    with open(first, "rb") as f1, open(second, "rb") as f2:
+        for offset, length in zip(offsets, lengths):
+            f1.seek(offset)
+            f2.seek(offset)
+            while length > 0:
+                chunk = min(length, 8 * 1024 * 1024)
+                if f1.read(chunk) != f2.read(chunk):
+                    return False
+                length -= chunk
+    return True
+
+
+def item_size(item, inodes):
+    return item.single_bytes + sum(inodes[i][0] for i in item.multi_inodes)
+
+
+def item_files(branch, rel):
+    """Yield branch-relative paths of all regular files under one item."""
+    path = os.path.join(branch, rel)
+    if os.path.isfile(path) and not os.path.islink(path):
+        yield rel
+        return
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            full = os.path.join(root, name)
+            if os.path.isfile(full) and not os.path.islink(full):
+                yield os.path.relpath(full, branch)
+
+
+def consolidate(branches, execute):
+    """Merge items that exist on multiple branches onto a single home branch.
+
+    Home is the branch holding the most bytes of the item. Fragments move as
+    hardlink-closed groups. A file colliding with an identical copy on the
+    home branch is simply dropped from the source (that IS the stale-duplicate
+    cleanup); a collision with different content skips the whole group.
+    """
+    scans = {}
+    for b in branches:
+        log(f"scanning {b} ...")
+        items, inodes = scan_branch(b)
+        groups = build_groups(items, inodes)
+        index = {}
+        for g in groups:
+            for rel in g[0]:
+                index[rel] = g
+        scans[b] = (items, inodes, index)
+
+    presence = {}
+    for b in branches:
+        for rel in scans[b][0]:
+            presence.setdefault(rel, []).append(b)
+    multi = {rel: bs for rel, bs in presence.items() if len(bs) > 1}
+    log(f"{len(multi)} item(s) present on more than one branch")
+
+    processed = set()
+    moved_total = 0
+    for rel in sorted(multi):
+        holders = multi[rel]
+        sizes = {b: item_size(scans[b][0][rel], scans[b][1]) for b in holders}
+        home = max(holders, key=lambda b: sizes[b])
+        for src in holders:
+            if src == home:
+                continue
+            rels, freed, movable = scans[src][2][rel]
+            key = (src, tuple(rels))
+            if key in processed:
+                continue
+            processed.add(key)
+            if not movable:
+                log(f"SKIP {src}/{rel}: group pinned by links outside scanned dirs")
+                continue
+
+            conflict = None
+            identical_bytes = 0
+            for item_rel in rels:
+                for f in item_files(src, item_rel):
+                    home_path = os.path.join(home, f)
+                    if not os.path.lexists(home_path):
+                        continue
+                    src_path = os.path.join(src, f)
+                    src_size = os.lstat(src_path).st_size
+                    if not os.path.isfile(home_path) or os.path.islink(home_path):
+                        conflict = f
+                        break
+                    if os.lstat(home_path).st_size != src_size or \
+                            not sampled_identical(src_path, home_path, src_size):
+                        conflict = f
+                        break
+                    identical_bytes += src_size
+                if conflict:
+                    break
+            if conflict:
+                log(f"SKIP {src}/{rel} -> {home}: conflicting copy of {conflict}")
+                continue
+
+            note = f" ({identical_bytes/2**30:.1f}G duplicate, dropped)" if identical_bytes else ""
+            log(f"{'moving' if execute else 'would move'} "
+                f"{src} -> {home}: {', '.join(rels)} [{freed/2**30:.1f}G]{note}")
+            moved_total += freed
+            if not execute:
+                continue
+
+            if target_free_bytes(home) < freed + 50 * 2**30:
+                fail(f"{home} would drop below 50G free; aborting")
+            sources = [os.path.join(src, ".", r) for r in rels]
+            subprocess.run(
+                ["rsync", "-aH", "--relative", "--ignore-existing", *sources, home + "/"],
+                check=True)
+            verify = subprocess.run(
+                ["rsync", "-aHn", "--relative", "--ignore-existing",
+                 "--itemize-changes", *sources, home + "/"],
+                capture_output=True, text=True, check=True)
+            diffs = [l for l in verify.stdout.splitlines()
+                     if l and not l.startswith("cd") and not l.startswith(".d")]
+            if diffs:
+                fail(f"verify pass shows differences after rsync of {rels}: {diffs[:5]}")
+            for r in rels:
+                p = os.path.join(src, r)
+                if os.path.isdir(p) and not os.path.islink(p):
+                    shutil.rmtree(p)
+                else:
+                    os.remove(p)
+
+    verb = "moved" if execute else "would move"
+    log(f"consolidation done: {verb} {moved_total/2**30:.0f}G between branches")
+    log("note: colliding hardlinks may have been split across inodes; "
+        "run mergerfs-hardlink-downloads afterwards to re-link")
+
+
 def move_group(branch, target, rels, freed, execute):
     sources = [os.path.join(branch, ".", rel) for rel in rels]
     for rel in rels:
@@ -189,10 +340,15 @@ def branch_usage(path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--target", required=True, help="branch to move data onto")
+    ap.add_argument("--target", help="branch to move data onto (rebalance mode)")
     ap.add_argument("--sources", nargs="+", required=True, help="branches to shed data from")
     ap.add_argument("--execute", action="store_true", help="actually move (default: dry-run)")
+    ap.add_argument("--consolidate", action="store_true",
+                    help="instead of leveling fill, merge items split across "
+                    "branches onto one branch each (--sources is the full branch list)")
     args = ap.parse_args()
+    if not args.consolidate and not args.target:
+        ap.error("--target is required unless --consolidate is given")
 
     if args.execute and os.geteuid() != 0:
         fail("--execute requires root")
@@ -203,10 +359,14 @@ def main():
         if os.path.ismount("/mnt/merged"):
             fail("/mnt/merged is mounted; stop mergerfs.service first")
 
-    branches = args.sources + [args.target]
+    branches = args.sources + ([args.target] if args.target else [])
     for b in branches:
         if not os.path.ismount(b):
             fail(f"{b} is not a mountpoint")
+
+    if args.consolidate:
+        consolidate(branches, args.execute)
+        return
 
     total_size = total_used = 0
     for b in branches:
