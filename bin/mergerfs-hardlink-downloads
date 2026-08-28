@@ -39,7 +39,8 @@ SERVICE = "mediaserver.service"
 def discover_branches():
     """Return the pool's branches, preferring mergerfs' own srcmounts."""
     try:
-        raw = os.getxattr(MERGED, b"user.mergerfs.srcmounts").decode()
+        # Runtime config xattrs live on the hidden control file, not the root.
+        raw = os.getxattr(os.path.join(MERGED, ".mergerfs"), b"user.mergerfs.srcmounts").decode()
         branches = [b for b in raw.split(":") if b]
         if branches:
             return branches
