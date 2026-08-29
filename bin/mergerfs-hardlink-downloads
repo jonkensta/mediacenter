@@ -22,8 +22,8 @@ enforces this unless --force is given.
 
 import argparse
 import filecmp
-import glob
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -31,30 +31,39 @@ import time
 MERGED = "/mnt/merged"
 DOWNLOADS = os.path.join(MERGED, "Downloads")
 MEDIA_DIRS = [os.path.join(MERGED, "Movies"), os.path.join(MERGED, "TV")]
-BRANCH_GLOB = "/mnt/0[0-7]"
 MIN_SIZE = 100 * 1024 * 1024  # ignore files smaller than 100MB
 TMP_SUFFIX = ".hlnk_tmp"
 SERVICE = "mediaserver.service"
 
+WARNINGS = 0
+
+
+def warn(message):
+    """Print a warning and count it; any warning makes the run exit non-zero
+    so a 'clean' report can be trusted to have actually seen every file."""
+    global WARNINGS
+    WARNINGS += 1
+    print(f"Warning: {message}", file=sys.stderr)
+
 
 def discover_branches():
-    """Return the pool's branches, preferring mergerfs' own srcmounts."""
+    """Return the pool's branches from mergerfs' own srcmounts.
+
+    This is authoritative and there is deliberately no glob fallback: guessing
+    (e.g. /mnt/0[0-7]) can include stale directories that are not branches at
+    all, and every safety check downstream depends on this list being right.
+    """
     try:
         # Runtime config xattrs live on the hidden control file, not the root.
         raw = os.getxattr(os.path.join(MERGED, ".mergerfs"), b"user.mergerfs.srcmounts").decode()
-        branches = [b for b in raw.split(":") if b]
-        if branches:
-            return branches
-    except OSError:
-        pass
-
-    branches = sorted(glob.glob(BRANCH_GLOB))
+    except OSError as error:
+        sys.exit(
+            f"Cannot read mergerfs srcmounts from {MERGED}/.mergerfs: {error}\n"
+            f"Is {MERGED} mounted? (systemctl start mergerfs.service)"
+        )
+    branches = [b for b in raw.split(":") if b]
     if not branches:
-        raise RuntimeError(f"No branches found; {MERGED} does not look mounted.")
-    print(
-        f"Warning: could not read mergerfs srcmounts, falling back to {BRANCH_GLOB}",
-        file=sys.stderr,
-    )
+        sys.exit(f"mergerfs srcmounts on {MERGED} is empty; refusing to guess.")
     return branches
 
 
@@ -78,11 +87,16 @@ def branch_path(merged_path, branch):
 
 
 def scan(path):
-    """Group files under path by size, ignoring small files and temp artifacts."""
+    """Group files under path by size, ignoring small files and temp artifacts.
+
+    Returns (by_size, inodes) where inodes is the set of (st_dev, st_ino) of
+    every file recorded in by_size.
+    """
     by_size = {}
+    inodes = set()
 
     def on_error(error):
-        print(f"Warning: cannot read {error.filename}: {error}", file=sys.stderr)
+        warn(f"cannot read {error.filename}: {error}")
 
     for dirpath, _, filenames in os.walk(path, onerror=on_error):
         for name in filenames:
@@ -90,22 +104,31 @@ def scan(path):
                 continue
             filepath = os.path.join(dirpath, name)
             try:
-                stat = os.stat(filepath)
+                st = os.lstat(filepath)
             except OSError as error:
-                print(f"Warning: cannot stat {filepath}: {error}", file=sys.stderr)
+                warn(f"cannot stat {filepath}: {error}")
                 continue
-            if stat.st_size >= MIN_SIZE:
-                by_size.setdefault(stat.st_size, []).append(filepath)
-    return by_size
+            if not stat.S_ISREG(st.st_mode):
+                continue  # a symlink is not a hardlink; never count or link one
+            if st.st_size >= MIN_SIZE:
+                by_size.setdefault(st.st_size, []).append(filepath)
+                inodes.add((st.st_dev, st.st_ino))
+    return by_size, inodes
 
 
 def find_stale_tmp_files(branches):
     """Return leftover .hlnk_tmp files from an interrupted run."""
     stale = []
+
+    def on_error(error):
+        warn(f"cannot read {error.filename}: {error}")
+
     for branch in branches:
         for media_dir in MEDIA_DIRS:
             root = os.path.join(branch, relative_to_merged(media_dir))
-            for dirpath, _, filenames in os.walk(root):
+            if not os.path.isdir(root):
+                continue
+            for dirpath, _, filenames in os.walk(root, onerror=on_error):
                 stale.extend(
                     os.path.join(dirpath, name)
                     for name in filenames
@@ -161,10 +184,20 @@ def sampled_same_content(first, second, size):
     return True
 
 
-def match_pairs(downloads_by_size, media_by_size, compare_fn):
-    """Pair each media file with at most one content-identical download."""
+def match_pairs(downloads_by_size, media_by_size, compare_fn, downloads_inodes,
+                branches):
+    """Pair each media file with at most one content-identical download.
+
+    Media files whose (st_dev, st_ino) is already in downloads_inodes are
+    correctly hardlinked to a Downloads copy and are skipped without reading
+    a single byte; they are counted in the returned already_linked total.
+    A linked file whose path still exists on more than one branch (the stale
+    leftover of an interrupted cross-branch run) is NOT counted as done - it
+    is warned about instead, so it can't hide behind the fast path.
+    """
     pairs = []
     skipped_no_match = 0
+    already_linked = 0
     comparisons = 0
     duplicate_bytes = 0
     last_report = time.monotonic()
@@ -175,6 +208,19 @@ def match_pairs(downloads_by_size, media_by_size, compare_fn):
             continue
 
         for media_path in media_paths:
+            try:
+                st = os.stat(media_path)
+            except OSError as error:
+                warn(f"cannot stat {media_path}: {error}")
+                continue
+            if (st.st_dev, st.st_ino) in downloads_inodes:
+                if len(find_branches(media_path, branches)) > 1:
+                    warn(f"{media_path} is hardlinked to Downloads but exists "
+                         f"on more than one branch (interrupted run?) - run "
+                         f"rebalance-branches --consolidate to drop the stale copy")
+                else:
+                    already_linked += 1
+                continue
             chosen = None
             for candidate in candidates:
                 try:
@@ -194,10 +240,7 @@ def match_pairs(downloads_by_size, media_by_size, compare_fn):
                         if not identical:
                             continue
                 except OSError as error:
-                    print(
-                        f"Warning: cannot compare {candidate} and {media_path}: {error}",
-                        file=sys.stderr,
-                    )
+                    warn(f"cannot compare {candidate} and {media_path}: {error}")
                     continue
                 chosen = candidate
                 break
@@ -207,7 +250,7 @@ def match_pairs(downloads_by_size, media_by_size, compare_fn):
                 continue
             pairs.append((size, chosen, media_path))
 
-    return pairs, skipped_no_match
+    return pairs, skipped_no_match, already_linked
 
 
 def link_same_branch(source, target):
@@ -287,6 +330,9 @@ def main():
             print(f"Removing {path}")
             os.remove(path)
         print(f"Removed {len(stale)} temp file(s).")
+        if WARNINGS:
+            sys.exit(f"{WARNINGS} warning(s) - some directories were unreadable, "
+                     f"so more temp files may remain.")
         return
 
     if args.execute and not args.force and mediaserver_is_running():
@@ -314,25 +360,29 @@ def main():
         print("Fast verify: sampling ~24MB per file instead of full compare.\n")
 
     print("Scanning Downloads...", flush=True)
-    downloads_by_size = scan(DOWNLOADS)
+    downloads_by_size, downloads_inodes = scan(DOWNLOADS)
 
     print("Scanning Movies and TV...", flush=True)
     media_by_size = {}
     for media_dir in MEDIA_DIRS:
-        for size, paths in scan(media_dir).items():
+        for size, paths in scan(media_dir)[0].items():
             media_by_size.setdefault(size, []).extend(paths)
 
     print("Comparing candidates...", flush=True)
-    pairs, skipped_no_match = match_pairs(downloads_by_size, media_by_size, compare_fn)
+    pairs, skipped_no_match, already_linked = match_pairs(
+        downloads_by_size, media_by_size, compare_fn, downloads_inodes, branches)
 
     if not pairs:
         print("No duplicates found.")
+        if already_linked:
+            print(f"Already hardlinked: {already_linked} (skipped without comparing)")
+        if WARNINGS:
+            sys.exit(f"{WARNINGS} warning(s) - the report above may be incomplete.")
         return
 
     total_savings = 0
     same_branch_count = 0
     diff_branch_count = 0
-    already_linked = 0
     skipped_ambiguous = 0
     failures = []
 
@@ -397,7 +447,7 @@ def main():
 
         print()
 
-    print(f"Duplicates found:  {len(pairs) - already_linked}")
+    print(f"Duplicates found:  {same_branch_count + diff_branch_count}")
     print(f"  Same branch:     {same_branch_count}")
     print(f"  Diff branch:     {diff_branch_count}")
     print(f"Already hardlinked: {already_linked} (no savings available)")
@@ -411,11 +461,16 @@ def main():
         print(f"\n{len(failures)} failure(s):", file=sys.stderr)
         for path, error in failures:
             print(f"  {path}: {error}", file=sys.stderr)
+    if WARNINGS:
+        print(f"\n{WARNINGS} warning(s) - the report above may be incomplete.",
+              file=sys.stderr)
 
     if dry_run:
         print("\nRe-run with --execute to apply changes.")
 
-    if failures:
+    # Ambiguous (multi-branch) pairs are unresolved duplicates: goal not met
+    # until a consolidate pass clears them, so they must fail the run too.
+    if failures or WARNINGS or skipped_ambiguous:
         sys.exit(1)
 
 
