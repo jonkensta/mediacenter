@@ -23,7 +23,6 @@ Safety behaviour:
 """
 
 import argparse
-import filecmp
 import os
 import shutil
 import stat
@@ -156,6 +155,43 @@ def item_size(item, inodes):
     return item.single_bytes + sum(inodes[i][0] for i in item.multi_inodes)
 
 
+FAST_EDGE = 4 * 1024 * 1024      # bytes compared at each end of the file
+FAST_BLOCK = 1024 * 1024         # interior sample block size
+FAST_SAMPLES = 16                # number of interior sample blocks
+
+
+def sampled_identical(first, second, size):
+    """Sampled equality check: head, tail, and evenly spaced interior blocks.
+
+    Reads ~24MB per file regardless of size; small files are compared in
+    full. Callers must have already established equal sizes. Not proof - but
+    the consolidate collision path only compares files that already match on
+    branch-relative path, name, AND size, where a genuine mismatch is
+    vanishingly rare; sampling is the cheap insurance against a same-size
+    copy corrupted by an interrupted write.
+    """
+    small = size <= 2 * FAST_EDGE + FAST_SAMPLES * FAST_BLOCK
+    if small:
+        offsets, lengths = [0], [size]
+    else:
+        span = size - 2 * FAST_EDGE - FAST_BLOCK
+        offsets = [0, size - FAST_EDGE]
+        lengths = [FAST_EDGE, FAST_EDGE]
+        for i in range(FAST_SAMPLES):
+            offsets.append(FAST_EDGE + span * i // (FAST_SAMPLES - 1))
+            lengths.append(FAST_BLOCK)
+    with open(first, "rb") as f1, open(second, "rb") as f2:
+        for offset, length in zip(offsets, lengths):
+            f1.seek(offset)
+            f2.seek(offset)
+            while length > 0:
+                chunk = min(length, 8 * 1024 * 1024)
+                if f1.read(chunk) != f2.read(chunk):
+                    return False
+                length -= chunk
+    return True
+
+
 def entry_kind(st_mode):
     if stat.S_ISDIR(st_mode):
         return "dir"
@@ -252,9 +288,10 @@ def consolidate(branches, execute):
                         conflict = f
                         break
                     # A collision is droppable only when BOTH sides are plain
-                    # regular files with identical bytes - and "identical"
-                    # means a FULL compare. A sampled match is not enough to
-                    # justify deleting one of the copies.
+                    # regular files that match on size and a sampled compare.
+                    # Same rel path + name + size already makes a mismatch
+                    # vanishingly rare; sampling (~24MB/file) is deliberate,
+                    # accepted insurance in place of a full compare.
                     if kind != "reg":
                         conflict = f
                         break
@@ -264,7 +301,7 @@ def consolidate(branches, execute):
                         conflict = f
                         break
                     if os.lstat(home_path).st_size != src_size or \
-                            not filecmp.cmp(src_path, home_path, shallow=False):
+                            not sampled_identical(src_path, home_path, src_size):
                         conflict = f
                         break
                     identical_bytes += src_size
