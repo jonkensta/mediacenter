@@ -1,0 +1,5 @@
+# Arguments for smartd - deploy to /etc/conf.d/smartd
+# -i 300: poll every 5 minutes. The default 30 minutes is too slow to catch
+# a thermal runaway before the drives cook; 5 minutes bounds how far past
+# 60C a drive can get before das-thermal-shutdown cuts DAS power.
+SMARTD_ARGS="-i 300"

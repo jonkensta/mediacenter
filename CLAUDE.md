@@ -31,7 +31,21 @@ This repository contains configuration files and utilities for managing a Docker
    - Runs from `/opt/mediaserver/docker-compose.yml`
    - All services use PUID/PGID=1012 (`media` user)
 
-4. **Docker daemon drop-in** (`systemd/docker.service.d/after-mergerfs.conf`)
+4. **Thermal protection** (`etc/smartd.conf` + `bin/das-thermal-shutdown`)
+   - smartd polls every DAS drive over SMART every 5 minutes (`etc/conf.d/smartd`)
+   - At 60°C it runs `das-thermal-shutdown`, which stops `mount-das.service`:
+     dependents stop first, branches unmount, and the relay opens — physically
+     cutting DAS power. Recovery is manual (find the cause, then
+     `systemctl start mediaserver.service`).
+   - Drives are listed by `/dev/disk/by-id`; `-d removable` tolerates the DAS
+     being off. `mount-das.service` reloads smartd after a successful start so
+     drives absent at smartd startup get registered.
+   - The root NVMe is monitored too (70/80°C, syslog only) and is listed
+     before the `DEFAULT` line so it can never trigger a DAS shutdown.
+   - The script ignores every smartd warning type except `Temperature`
+     (other failures are logged, not acted on).
+
+5. **Docker daemon drop-in** (`systemd/docker.service.d/after-mergerfs.conf`)
    - Containers are `restart: unless-stopped`, so dockerd starts them itself at
      boot, independently of `mediaserver.service`. dockerd is ready in seconds
      while the DAS can take minutes, so without this drop-in containers can
@@ -177,6 +191,15 @@ sudo install -Dm644 systemd/docker.service.d/after-mergerfs.conf \
   /etc/systemd/system/docker.service.d/after-mergerfs.conf
 sudo systemctl daemon-reload
 sudo systemctl restart <service_name>
+
+# After modifying the smartd thermal config (safe while the DAS is up;
+# restarting smartd never touches the mounts)
+sudo install -m755 bin/das-thermal-shutdown /usr/local/bin/das-thermal-shutdown
+sudo install -m644 etc/smartd.conf /etc/smartd.conf
+sudo install -m644 etc/conf.d/smartd /etc/conf.d/smartd
+sudo systemctl restart smartd.service
+# mount-das.service also gained an ExecStartPost smartd reload — deploy it with
+# daemon-reload only; do NOT restart mount-das (that power-cycles the DAS).
 
 # After modifying docker-compose.yml
 cd /opt/mediaserver

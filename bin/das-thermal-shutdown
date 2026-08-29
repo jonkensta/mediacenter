@@ -1,0 +1,35 @@
+#!/bin/sh
+# smartd -M exec hook for the DAS drives (see etc/smartd.conf).
+#
+# On a Temperature warning (a drive reached the -W critical threshold, 60C)
+# this stops mount-das.service. systemd stops the dependents first
+# (mediaserver -> mergerfs), unmounts the branches, and opens the relay -
+# physically cutting power to the overheating enclosure, not just idling it.
+#
+# Every other smartd warning type (Health, Usage, SelfTest, ErrorCount, ...)
+# is logged and does NOT shut anything down.
+#
+# Recovery is deliberately manual: find out why a drive hit 60C before
+# powering the DAS back up with `systemctl start mediaserver.service`.
+set -u
+
+failtype="${SMARTD_FAILTYPE:-unknown}"
+device="${SMARTD_DEVICESTRING:-${SMARTD_DEVICE:-unknown device}}"
+message="${SMARTD_MESSAGE:-no message}"
+
+logger -t das-thermal-shutdown -p daemon.crit -- "smartd warning [$failtype] on $device: $message"
+
+case "$failtype" in
+    Temperature) ;;
+    EmailTest)
+        logger -t das-thermal-shutdown -p daemon.info -- "smartd exec hook test OK (no action taken)"
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+logger -t das-thermal-shutdown -p daemon.emerg -- \
+    "drive over temperature limit - stopping mount-das.service to cut DAS power"
+exec systemctl stop mount-das.service

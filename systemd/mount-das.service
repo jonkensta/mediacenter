@@ -31,6 +31,11 @@ ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/03 || mount -U 6184078e-d973-48
 ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/04 || mount -U 019981e1-9a2c-4935-8d4f-7274379fbb04 /mnt/04'
 ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/05 || mount -U b93e6ac1-c300-4211-8ef8-da189bf3ae84 /mnt/05'
 ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/07 || mount -U ee1dd6be-94ad-4247-baf5-66a17dbc67df /mnt/07'
+# Re-register the DAS drives with smartd (thermal protection, /etc/smartd.conf):
+# smartd only opens devices at startup/reload, so drives that were absent then
+# (DAS off at boot, or back from a power cycle) are unmonitored until a reload.
+# "-" prefix: a smartd hiccup must not fail the mount unit.
+ExecStartPost=-/usr/bin/systemctl try-reload-or-restart smartd.service
 # Unmount only what is actually mounted (so this still succeeds after a failed
 # start), but fail on a genuine busy/error unmount. A failure here aborts the
 # remaining ExecStopPost lines, so the relay is NOT opened and the DAS keeps
