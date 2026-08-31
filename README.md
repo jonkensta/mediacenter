@@ -27,6 +27,7 @@ Create the config folders for each service:
 ```bash
 # Create directories for services
 sudo mkdir -p /opt/mediaserver/{radarr,sonarr,bazarr,prowlarr,deluge,heimdall,jellyfin,endlessh,gluetun,foundryvtt,cloudflare-ddns,swag}
+sudo mkdir -p /opt/mediaserver/kimai/{data,plugins,mysql}
 sudo mkdir -p /opt/pihole/config
 
 # Copy the compose files to their respective destinations, naming them docker-compose.yml
@@ -169,6 +170,15 @@ SWAG (Secure Web Application Gateway) provides reverse proxy and SSL termination
    Since Deluge uses Gluetun's network interface, edit `deluge.subdomain.conf` and change the `upstream_app` from `deluge` to `gluetun`:
    ```nginx
    set $upstream_app gluetun;
+   ```
+
+4. **Kimai**:
+   Do not copy the sample — use the conf from this repo, which sets
+   `upstream_port` to 8001 (the `kimai/kimai2:apache` image listens on 8001,
+   not 80 as the SWAG sample assumes):
+   ```bash
+   sudo cp swag/proxy-confs/kimai.subdomain.conf /opt/mediaserver/swag/nginx/proxy-confs/
+   docker exec swag nginx -s reload
    ```
 
 See the [SWAG documentation](https://docs.linuxserver.io/general/swag/) for more details.

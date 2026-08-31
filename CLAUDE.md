@@ -55,7 +55,7 @@ This repository contains configuration files and utilities for managing a Docker
 
 - **VPN Routing**: Deluge traffic routes through Gluetun VPN container using `network_mode: "service:gluetun"`
   - This affects reverse proxy setup: deluge's nginx config must set `upstream_app` to `gluetun` instead of `deluge`
-- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 9 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, pihole, prowlarr, radarr, sonarr)
+- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 10 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, sonarr)
 - **Two networks**: `frontend` (compose-managed) holds the internet-facing tier — swag and endlessh. `mediaserver` (external, shared with the pihole compose file) holds everything else. `swag` is the only container on both, bridging TLS termination to the backend. `endlessh` is frontend-only, so a compromise there cannot reach Deluge RPC, the \*arr APIs, or Gluetun's control server. This limits blast radius but is not auth: a proxy-conf without auth still exposes an admin UI.
 - **Service Communication**: Non-host-mode containers communicate via Docker DNS using container names
 
@@ -162,6 +162,18 @@ cp <service>.subdomain.conf.sample <service>.subdomain.conf
 ```
 
 **Critical**: Deluge config requires manual edit to change `upstream_app` from `deluge` to `gluetun` due to network_mode sharing.
+
+### Kimai
+
+Time tracking (`kimai` + `kimai-db` services). `kimai-db` lives on the
+compose-managed `kimai` network, which is `internal: true` — only the kimai app
+can reach it and it has no route out. Placeholders to replace on deploy:
+`YOUR_KIMAI_DB_PASSWORD` (appears twice: MYSQL_PASSWORD and DATABASE_URL),
+`YOUR_KIMAI_DB_ROOT_PASSWORD`, `YOUR_KIMAI_ADMIN_EMAIL`,
+`YOUR_KIMAI_ADMIN_PASSWORD` (ADMINMAIL/ADMINPASS create the superadmin on
+first start only). The proxy conf in `swag/proxy-confs/kimai.subdomain.conf`
+is the SWAG sample with `upstream_port` changed to 8001 — the
+`kimai/kimai2:apache` image listens on 8001, not 80.
 
 ### FoundryVTT
 

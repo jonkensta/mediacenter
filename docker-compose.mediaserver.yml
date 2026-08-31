@@ -176,6 +176,53 @@ services:
     networks:
       - mediaserver
 
+  kimai-db:
+    image: mysql:8.3
+    container_name: kimai-db
+    environment:
+      - TZ=America/Chicago
+      - MYSQL_DATABASE=kimai
+      - MYSQL_USER=kimai
+      - MYSQL_PASSWORD=YOUR_KIMAI_DB_PASSWORD
+      - MYSQL_ROOT_PASSWORD=YOUR_KIMAI_DB_ROOT_PASSWORD
+    command: --default-storage-engine innodb
+    volumes:
+      - ./kimai/mysql:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: mysqladmin -p$$MYSQL_ROOT_PASSWORD ping -h localhost
+      interval: 20s
+      start_period: 10s
+      timeout: 10s
+      retries: 3
+    # Internal-only network: nothing but kimai can reach the database.
+    networks:
+      - kimai
+
+  kimai:
+    image: kimai/kimai2:apache
+    container_name: kimai
+    depends_on:
+      kimai-db:
+        condition: service_healthy
+        restart: true
+    environment:
+      - TZ=America/Chicago
+      - ADMINMAIL=YOUR_KIMAI_ADMIN_EMAIL
+      - ADMINPASS=YOUR_KIMAI_ADMIN_PASSWORD
+      # Docker bridge ranges, so X-Forwarded-Proto from SWAG is trusted and
+      # generated URLs are https.
+      - TRUSTED_PROXIES=172.16.0.0/12,127.0.0.1,::1
+      - "DATABASE_URL=mysql://kimai:YOUR_KIMAI_DB_PASSWORD@kimai-db/kimai?charset=utf8mb4&serverVersion=8.3.0"
+    volumes:
+      - ./kimai/data:/opt/kimai/var/data
+      - ./kimai/plugins:/opt/kimai/var/plugins
+    restart: unless-stopped
+    # No host port: reached only via SWAG (kimai.subdomain.conf, upstream 8001).
+    networks:
+      - mediaserver
+      - kimai
+
   cloudflare-ddns:
     # Replaces oznu/cloudflare-ddns, which has been archived upstream for years.
     # This one takes a scoped API token (Zone.DNS:Edit + Zone.Zone:Read on the
@@ -239,3 +286,7 @@ networks:
   # Internet-facing tier (swag, endlessh). Compose manages this one.
   frontend:
     driver: bridge
+  # kimai <-> kimai-db only; internal, so the db has no route out.
+  kimai:
+    driver: bridge
+    internal: true
