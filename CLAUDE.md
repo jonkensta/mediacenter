@@ -66,6 +66,15 @@ Located in `bin/` and deployed to `/usr/local/bin/`:
 
 - `relay` - Python script using pyserial to control USB relay (commands: open, close, test)
 - `await-block-devices` - Python script using pyudev to wait for block devices by UUID (monotonic deadline, one udev enumeration per poll)
+- `cf-dns` - Manages DNS records in the Cloudflare zone (`list`, `add <name>
+  [target]`). `add` creates a DNS-only CNAME to `home.jstarr.me` by default —
+  run it whenever a new SWAG subdomain needs a record. Refuses to overwrite an
+  existing record. Reads the scoped API token from `$CLOUDFLARE_API_TOKEN`,
+  the Bitwarden item `dash.cloudflare.com` (hidden field `dns-edit-token`,
+  only when the vault is already unlocked - never prompts),
+  `/etc/mediaserver/cloudflare-api-token`, or the cloudflare-ddns service in
+  `/opt/mediaserver/docker-compose.yml`; the token never appears on a command
+  line.
 - `update-deluge-port` - Reads the forwarded port from Gluetun and sets it as Deluge's listen port. Reads the Gluetun API key from `$GLUETUN_API_KEY` or `/etc/mediaserver/gluetun-api-key` (mode 0600) and pipes it in over stdin; the Deluge password is read inside the container from `/config/auth`. Neither ever appears on the host command line. Nothing schedules this - run it after a VPN reconnect (PIA changes the forwarded port each time).
 
 #### Deluge management scripts (run inside the container via `docker exec`)
