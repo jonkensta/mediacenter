@@ -223,6 +223,21 @@ services:
       - mediaserver
       - kimai
 
+  authelia:
+    image: authelia/authelia:4.39
+    container_name: authelia
+    user: "1012:1012"
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - ./authelia:/config
+    restart: unless-stopped
+    # Forward-auth provider for SWAG (authelia-server.conf/authelia-location.conf
+    # snippets). Backend-only: swag reaches it over the mediaserver network; it
+    # publishes no ports and needs no route to anything else.
+    networks:
+      - mediaserver
+
   cloudflare-ddns:
     # Replaces oznu/cloudflare-ddns, which has been archived upstream for years.
     # This one takes a scoped API token (Zone.DNS:Edit + Zone.Zone:Read on the

@@ -55,7 +55,8 @@ This repository contains configuration files and utilities for managing a Docker
 
 - **VPN Routing**: Deluge traffic routes through Gluetun VPN container using `network_mode: "service:gluetun"`
   - This affects reverse proxy setup: deluge's nginx config must set `upstream_app` to `gluetun` instead of `deluge`
-- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 10 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, sonarr)
+- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 10 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, sonarr), plus the Authelia portal
+- **Forward Auth**: Authelia sits in front of the browser-facing admin UIs via SWAG's `auth_request` snippets (see the Authelia section below). Jellyfin and FoundryVTT keep their native auth only.
 - **Two networks**: `frontend` (compose-managed) holds the internet-facing tier — swag and endlessh. `mediaserver` (external, shared with the pihole compose file) holds everything else. `swag` is the only container on both, bridging TLS termination to the backend. `endlessh` is frontend-only, so a compromise there cannot reach Deluge RPC, the \*arr APIs, or Gluetun's control server. This limits blast radius but is not auth: a proxy-conf without auth still exposes an admin UI.
 - **Service Communication**: Non-host-mode containers communicate via Docker DNS using container names
 
@@ -174,6 +175,44 @@ can reach it and it has no route out. Placeholders to replace on deploy:
 first start only). The proxy conf in `swag/proxy-confs/kimai.subdomain.conf`
 is the SWAG sample with `upstream_port` changed to 8001 — the
 `kimai/kimai2:apache` image listens on 8001, not 80.
+
+### Authelia (forward auth / 2FA)
+
+Single container (`authelia`), file backend, SQLite storage — no database or
+Redis. Config lives in `authelia/` (deployed to `/opt/mediaserver/authelia/`):
+
+- `configuration.yml` — placeholders `YOUR_AUTHELIA_JWT_SECRET`,
+  `YOUR_AUTHELIA_SESSION_SECRET`, `YOUR_AUTHELIA_STORAGE_ENCRYPTION_KEY`.
+  Generate each with
+  `docker run --rm authelia/authelia:4.39 authelia crypto rand --length 64`.
+- `users_database.yml` — placeholders `YOUR_USERNAME`, `YOUR_DISPLAY_NAME`,
+  `YOUR_EMAIL`, `YOUR_ARGON2ID_PASSWORD_HASH`. Generate the hash interactively:
+  `docker run --rm -it authelia/authelia:4.39 authelia crypto hash generate argon2`.
+
+Key invariants:
+
+- `server.address: 'tcp://:9091/authelia'` — the `/authelia` path prefix is
+  **required** by SWAG's stock `authelia-server.conf`/`authelia-location.conf`
+  snippets. The portal URL is `https://authelia.jstarr.me/authelia/` (note the
+  subfolder); `swag/proxy-confs/authelia.subdomain.conf` serves that host.
+- Policy is `two_factor` (TOTP). There is no SMTP notifier: enrollment and
+  password-reset links land in the container at `/config/notification.txt`
+  (`docker exec authelia cat /config/notification.txt`).
+- A service is protected by uncommenting the two `include` lines
+  (`authelia-server.conf` in the `server` block, `authelia-location.conf` in
+  the `location /` block) in its proxy-conf under
+  `/opt/mediaserver/swag/nginx/proxy-confs/`, then restarting swag. Protect the
+  browser admin UIs: bazarr, deluge, heimdall, kimai, pihole, prowlarr, radarr,
+  sonarr (and lidarr/navidrome if enabled). The `/api` location blocks in the
+  \*arr confs deliberately stay outside Authelia so API-key clients keep working.
+- Do **not** protect jellyfin or foundryvtt: their native mobile/TV/player
+  clients cannot follow a forward-auth redirect and would break. They keep
+  their own login.
+- First deploy: `mkdir -p /opt/mediaserver/authelia`, copy both YAML files with
+  placeholders replaced, `chown -R media:media /opt/mediaserver/authelia`
+  (the container runs as `1012:1012`), then `docker compose up -d authelia`
+  and check `docker logs authelia` — Authelia refuses to start on any config
+  error, so a typo fails loudly, not silently.
 
 ### FoundryVTT
 

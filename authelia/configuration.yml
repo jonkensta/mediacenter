@@ -1,0 +1,62 @@
+# Authelia configuration. Deployed to /opt/mediaserver/authelia/configuration.yml.
+#
+# Placeholders to replace on deploy (generate each with
+# `docker run --rm authelia/authelia:4.39 authelia crypto rand --length 64`):
+#   YOUR_AUTHELIA_JWT_SECRET
+#   YOUR_AUTHELIA_SESSION_SECRET
+#   YOUR_AUTHELIA_STORAGE_ENCRYPTION_KEY
+#
+# The '/authelia' path prefix on server.address is required by SWAG's stock
+# authelia-server.conf / authelia-location.conf snippets (they proxy the portal
+# as a subfolder and auth_request /authelia/api/authz/auth-request).
+
+server:
+  address: 'tcp://:9091/authelia'
+
+log:
+  level: 'info'
+
+identity_validation:
+  reset_password:
+    jwt_secret: 'YOUR_AUTHELIA_JWT_SECRET'
+
+totp:
+  issuer: 'jstarr.me'
+
+authentication_backend:
+  file:
+    path: '/config/users_database.yml'
+
+access_control:
+  default_policy: 'deny'
+  rules:
+    # Only proxy-confs that include the authelia snippets ever consult this.
+    # Jellyfin and FoundryVTT keep their native auth (their non-browser
+    # clients cannot follow a forward-auth redirect), so they never match.
+    - domain: '*.jstarr.me'
+      policy: 'two_factor'
+
+session:
+  secret: 'YOUR_AUTHELIA_SESSION_SECRET'
+  cookies:
+    - domain: 'jstarr.me'
+      # Portal lives under the /authelia subfolder (see server.address above).
+      authelia_url: 'https://authelia.jstarr.me/authelia/'
+      default_redirection_url: 'https://heimdall.jstarr.me'
+
+regulation:
+  max_retries: 3
+  find_time: '2 minutes'
+  ban_time: '10 minutes'
+
+storage:
+  encryption_key: 'YOUR_AUTHELIA_STORAGE_ENCRYPTION_KEY'
+  local:
+    path: '/config/db.sqlite3'
+
+# No SMTP: identity-verification links (TOTP enrollment, password reset) are
+# written to /config/notification.txt — read them with
+# `docker exec authelia cat /config/notification.txt`.
+notifier:
+  filesystem:
+    filename: '/config/notification.txt'

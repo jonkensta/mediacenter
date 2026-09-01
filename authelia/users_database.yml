@@ -1,0 +1,14 @@
+# Authelia user database. Deployed to /opt/mediaserver/authelia/users_database.yml.
+#
+# Generate the password hash interactively (never on the command line):
+#   docker run --rm -it authelia/authelia:4.39 authelia crypto hash generate argon2
+# and paste the '$argon2id$...' output as the password value.
+
+users:
+  YOUR_USERNAME:
+    disabled: false
+    displayname: 'YOUR_DISPLAY_NAME'
+    password: 'YOUR_ARGON2ID_PASSWORD_HASH'
+    email: 'YOUR_EMAIL'
+    groups:
+      - 'admins'
