@@ -238,6 +238,41 @@ services:
     networks:
       - mediaserver
 
+  scrutiny:
+    # Omnibus: web UI + InfluxDB + collector in one container. Runs as root:
+    # smartctl needs raw device access (no PUID support). SMART history is
+    # keyed by WWN (via /run/udev), so host sdX shuffles don't corrupt it.
+    image: ghcr.io/analogj/scrutiny:master-omnibus
+    container_name: scrutiny
+    environment:
+      - TZ=America/Chicago
+    cap_add:
+      - SYS_RAWIO # SATA SMART ioctls
+      - SYS_ADMIN # NVMe admin commands
+    volumes:
+      - ./scrutiny/config:/opt/scrutiny/config
+      - ./scrutiny/influxdb:/opt/scrutiny/influxdb
+      - /run/udev:/run/udev:ro
+    # Same drives as etc/smartd.conf, by stable /dev/disk/by-id names mapped to
+    # fixed container-side nodes. Docker resolves the symlinks at container
+    # start, so after a DAS power cycle the container must be restarted to
+    # pick up re-enumerated devices - mount-das.service does this in
+    # ExecStartPost (see systemd/mount-das.service).
+    devices:
+      - /dev/disk/by-id/nvme-CT500P3PSSD8_2301E6992FAF:/dev/nvme0n1
+      - /dev/disk/by-id/ata-ST4000LM024-2AN17V_WCK0NYK4:/dev/sda
+      - /dev/disk/by-id/ata-ST4000LM024-2AN17V_WCK0NEKR:/dev/sdb
+      - /dev/disk/by-id/ata-ST4000LM024-2AN17V_WCK0R0RL:/dev/sdc
+      - /dev/disk/by-id/ata-HGST_HUS724040ALE640_PK2338P4GXWMXC:/dev/sdd
+      - /dev/disk/by-id/ata-WDC_WD120EMFZ-11A6JA0_9RG714DC:/dev/sde
+      - /dev/disk/by-id/ata-Hitachi_HUS724040ALE641_PCHJ54EB:/dev/sdf
+      - /dev/disk/by-id/ata-Hitachi_HUS724040ALE641_PBK9K9LS:/dev/sdg
+    restart: unless-stopped
+    # No host port: reached only via SWAG (scrutiny.subdomain.conf, behind
+    # Authelia). Observability only - smartd remains the thermal actor.
+    networks:
+      - mediaserver
+
   cloudflare-ddns:
     # Replaces oznu/cloudflare-ddns, which has been archived upstream for years.
     # This one takes a scoped API token (Zone.DNS:Edit + Zone.Zone:Read on the

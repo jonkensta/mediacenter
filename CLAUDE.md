@@ -55,7 +55,7 @@ This repository contains configuration files and utilities for managing a Docker
 
 - **VPN Routing**: Deluge traffic routes through Gluetun VPN container using `network_mode: "service:gluetun"`
   - This affects reverse proxy setup: deluge's nginx config must set `upstream_app` to `gluetun` instead of `deluge`
-- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 10 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, sonarr), plus the Authelia portal
+- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 11 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, scrutiny, sonarr), plus the Authelia portal
 - **Forward Auth**: Authelia sits in front of the browser-facing admin UIs via SWAG's `auth_request` snippets (see the Authelia section below). Jellyfin and FoundryVTT keep their native auth only.
 - **Two networks**: `frontend` (compose-managed) holds the internet-facing tier — swag and endlessh. `mediaserver` (external, shared with the pihole compose file) holds everything else. `swag` is the only container on both, bridging TLS termination to the backend. `endlessh` is frontend-only, so a compromise there cannot reach Deluge RPC, the \*arr APIs, or Gluetun's control server. This limits blast radius but is not auth: a proxy-conf without auth still exposes an admin UI.
 - **Service Communication**: Non-host-mode containers communicate via Docker DNS using container names
@@ -213,6 +213,23 @@ Key invariants:
   (the container runs as `1012:1012`), then `docker compose up -d authelia`
   and check `docker logs authelia` — Authelia refuses to start on any config
   error, so a typo fails loudly, not silently.
+
+### Scrutiny (SMART history / disk health UI)
+
+Omnibus image (web UI + InfluxDB + collector in one container) at
+`scrutiny.jstarr.me`, behind Authelia. Observability only — smartd stays the
+thermal actor (`etc/smartd.conf`); Scrutiny is the historian/alerter.
+
+- Monitors the same drives as smartd: the `devices:` list in the compose file
+  maps each `/dev/disk/by-id` name to a fixed container-side node. **Keep this
+  list in sync with `etc/smartd.conf`** when drives are swapped.
+- Needs `SYS_RAWIO` (SATA SMART) + `SYS_ADMIN` (NVMe) and `/run/udev:ro`
+  (drive identity by WWN, so sdX shuffles don't corrupt history).
+- Docker resolves the by-id symlinks at container start, so after a DAS power
+  cycle the container holds dead device nodes. `mount-das.service` has an
+  `ExecStartPost=-docker restart scrutiny` to fix that automatically.
+- Collector runs on the container's internal cron (default: hourly). Manual
+  run: `docker exec scrutiny /opt/scrutiny/bin/scrutiny-collector-metrics run`.
 
 ### FoundryVTT
 

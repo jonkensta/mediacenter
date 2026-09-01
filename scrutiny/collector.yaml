@@ -1,0 +1,7 @@
+# Deployed to /opt/mediaserver/scrutiny/config/collector.yaml.
+# Appended to auto-detected devices: smartctl --scan misses the NVMe because
+# only the block node /dev/nvme0n1 is mapped into the container.
+version: 1
+devices:
+  - device: /dev/nvme0n1
+    type: nvme

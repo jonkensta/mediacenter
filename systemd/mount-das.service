@@ -36,6 +36,11 @@ ExecStartPost=/usr/bin/sh -c 'mountpoint -q /mnt/07 || mount -o noatime -U ee1dd
 # (DAS off at boot, or back from a power cycle) are unmonitored until a reload.
 # "-" prefix: a smartd hiccup must not fail the mount unit.
 ExecStartPost=-/usr/bin/systemctl try-reload-or-restart smartd.service
+# Recreate scrutiny's device nodes after a DAS power cycle: docker resolves the
+# /dev/disk/by-id symlinks in its devices: list at container start, so the
+# collector holds stale nodes until a restart. "-" prefix: scrutiny (or docker)
+# being down must not fail the mount unit.
+ExecStartPost=-/usr/bin/docker restart scrutiny
 # Unmount only what is actually mounted (so this still succeeds after a failed
 # start), but fail on a genuine busy/error unmount. A failure here aborts the
 # remaining ExecStopPost lines, so the relay is NOT opened and the DAS keeps
