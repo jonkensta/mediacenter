@@ -19,7 +19,7 @@ services:
       - ./endlessh:/config
     ports:
       - 2222:2222/tcp
-    restart: unless-stopped
+    restart: on-failure
     # Internet-facing tarpit: frontend only, so it cannot reach Deluge RPC,
     # the *arr APIs, or Gluetun's control server.
     networks:
@@ -36,7 +36,7 @@ services:
       - ./radarr:/config
       - /mnt/merged/Movies:/movies
       - /mnt/merged/Downloads:/downloads
-    restart: unless-stopped
+    restart: on-failure
     networks:
       - mediaserver
 
@@ -51,7 +51,7 @@ services:
       - ./sonarr:/config
       - /mnt/merged/TV:/tv
       - /mnt/merged/Downloads:/downloads
-    restart: unless-stopped
+    restart: on-failure
     networks:
       - mediaserver
 
@@ -66,7 +66,7 @@ services:
       - ./bazarr:/config
       - /mnt/merged/Movies:/movies
       - /mnt/merged/TV:/tv
-    restart: unless-stopped
+    restart: on-failure
     networks:
       - mediaserver
 
@@ -79,7 +79,7 @@ services:
       - TZ=America/Chicago
     volumes:
       - ./prowlarr:/config
-    restart: unless-stopped
+    restart: on-failure
     networks:
       - mediaserver
 
@@ -103,7 +103,7 @@ services:
       - ./gluetun:/gluetun
     devices:
       - /dev/net/tun:/dev/net/tun
-    restart: unless-stopped
+    restart: on-failure
     networks:
       - mediaserver
 
@@ -119,7 +119,7 @@ services:
     volumes:
       - ./deluge:/config
       - /mnt/merged/Downloads:/downloads
-    restart: unless-stopped
+    restart: on-failure
     depends_on:
       - gluetun
 
@@ -137,7 +137,7 @@ services:
       - /mnt/merged/Movies:/data/movies
     devices:
       - /dev/dri:/dev/dri
-    restart: unless-stopped
+    restart: on-failure
     networks:
       - mediaserver
 
@@ -150,7 +150,7 @@ services:
       - TZ=America/Chicago
     volumes:
       - ./heimdall:/config
-    restart: unless-stopped
+    restart: on-failure
     networks:
       - mediaserver
 
@@ -188,7 +188,7 @@ services:
     command: --default-storage-engine innodb
     volumes:
       - ./kimai/mysql:/var/lib/mysql
-    restart: unless-stopped
+    restart: on-failure
     healthcheck:
       test: mysqladmin -p$$MYSQL_ROOT_PASSWORD ping -h localhost
       interval: 20s
@@ -217,7 +217,7 @@ services:
     volumes:
       - ./kimai/data:/opt/kimai/var/data
       - ./kimai/plugins:/opt/kimai/var/plugins
-    restart: unless-stopped
+    restart: on-failure
     # No host port: reached only via SWAG (kimai.subdomain.conf, upstream 8001).
     networks:
       - mediaserver
@@ -231,7 +231,7 @@ services:
       - TZ=America/Chicago
     volumes:
       - ./authelia:/config
-    restart: unless-stopped
+    restart: on-failure
     # Forward-auth provider for SWAG (authelia-server.conf/authelia-location.conf
     # snippets). Backend-only: swag reaches it over the mediaserver network; it
     # publishes no ports and needs no route to anything else.
@@ -267,7 +267,7 @@ services:
       - /dev/disk/by-id/ata-WDC_WD120EMFZ-11A6JA0_9RG714DC:/dev/sde
       - /dev/disk/by-id/ata-Hitachi_HUS724040ALE641_PCHJ54EB:/dev/sdf
       - /dev/disk/by-id/ata-Hitachi_HUS724040ALE641_PBK9K9LS:/dev/sdg
-    restart: unless-stopped
+    restart: on-failure
     # No host port: reached only via SWAG (scrutiny.subdomain.conf, behind
     # Authelia). Observability only - smartd remains the thermal actor.
     networks:
@@ -279,7 +279,7 @@ services:
     # zone) rather than a Global API key.
     image: favonia/cloudflare-ddns:1
     container_name: cloudflare-ddns
-    restart: unless-stopped
+    restart: on-failure
     user: "1012:1012"
     cap_drop:
       - ALL
@@ -321,7 +321,7 @@ services:
     ports:
       - 80:80
       - 443:443
-    restart: unless-stopped
+    restart: on-failure
     # The only container on both networks: it terminates TLS on frontend and
     # proxies through to the services on mediaserver.
     networks:

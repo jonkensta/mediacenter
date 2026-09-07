@@ -40,7 +40,13 @@ ExecStartPost=-/usr/bin/systemctl try-reload-or-restart smartd.service
 # /dev/disk/by-id symlinks in its devices: list at container start, so the
 # collector holds stale nodes until a restart. "-" prefix: scrutiny (or docker)
 # being down must not fail the mount unit.
-ExecStartPost=-/usr/bin/docker restart scrutiny
+# Only when dockerd is already running. At boot it is not, and the docker CLI
+# would socket-activate docker.service, which is ordered after mediaserver's
+# chain (docker <- mergerfs <- mount-das): this line would then wait on itself
+# until TimeoutStartSec fires and takes the whole DAS chain down with it.
+# Skipping at boot is harmless: scrutiny has not started yet, so it gets fresh
+# device nodes anyway.
+ExecStartPost=-/usr/bin/sh -c '/usr/bin/systemctl is-active --quiet docker.service && /usr/bin/docker restart scrutiny'
 # Unmount only what is actually mounted (so this still succeeds after a failed
 # start), but fail on a genuine busy/error unmount. A failure here aborts the
 # remaining ExecStopPost lines, so the relay is NOT opened and the DAS keeps

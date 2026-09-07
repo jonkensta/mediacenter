@@ -13,13 +13,14 @@ This repository contains configuration files and utilities for managing a Docker
 1. **DAS Management** (`mount-das.service`)
    - Controls power to the DAS via USB relay at `/dev/ttyUSB0`
    - Uses `bin/relay` Python script to send serial commands to power relay
-   - Uses `bin/await-block-devices` to wait for all 8 drives (by UUID) to appear
-   - Mounts 8 data drives to `/mnt/00` through `/mnt/07`
+   - Uses `bin/await-block-devices` to wait for all 7 drives (by UUID) to appear
+   - Mounts 7 data drives to `/mnt/00`-`/mnt/05` and `/mnt/07` (`/mnt/06` is
+     retired: the two failed 4TB HGSTs are gone and a 12TB WD took slot 05)
    - Auto-retries on failure by power cycling the DAS (60s restart, 5 attempts in 30min)
 
 2. **Filesystem Unification** (`mergerfs.service`)
    - Depends on `mount-das.service`
-   - Merges `/mnt/00` through `/mnt/07` into `/mnt/merged`
+   - Merges the 7 branches (`/mnt/00`-`/mnt/05`, `/mnt/07`) into `/mnt/merged`
    - Uses `cache.files=partial` (critical for deluge's mmap usage)
    - Category create policy: `epmfs` (existing path, most free space)
    - `ExecStartPost` waits for `/mnt/merged` to actually be a mountpoint before
@@ -30,6 +31,12 @@ This repository contains configuration files and utilities for managing a Docker
      rather than writing into an empty `/mnt/merged` on the root filesystem
    - Runs from `/opt/mediaserver/docker-compose.yml`
    - All services use PUID/PGID=1012 (`media` user)
+   - **This unit is the only thing that starts the media containers.** They
+     use `restart: on-failure`, never `unless-stopped`/`always`: dockerd
+     restores those at daemon start regardless of whether mergerfs is up,
+     which is how a failed DAS mount ends with Deluge writing into the root
+     filesystem. `on-failure` still restarts a crashed container while dockerd
+     runs, but does not resurrect it at boot.
 
 4. **Thermal protection** (`etc/smartd.conf` + `bin/das-thermal-shutdown`)
    - smartd polls every DAS drive over SMART every 5 minutes (`etc/conf.d/smartd`)
@@ -45,11 +52,16 @@ This repository contains configuration files and utilities for managing a Docker
    - The script ignores every smartd warning type except `Temperature`
      (other failures are logged, not acted on).
 
-5. **Docker daemon drop-in** (`systemd/docker.service.d/after-mergerfs.conf`)
-   - Containers are `restart: unless-stopped`, so dockerd starts them itself at
-     boot, independently of `mediaserver.service`. dockerd is ready in seconds
-     while the DAS can take minutes, so without this drop-in containers can
-     bind-mount `/mnt/merged` before it is mounted.
+5. **Docker daemon stays independent of the DAS.** `docker.service` has no
+   ordering or dependency on `mergerfs.service` (there used to be an
+   `After=`/`Wants=` drop-in; it was removed because `After=` is satisfied by
+   a *failed* mergerfs job too, so it never actually protected anything).
+   pihole runs from `docker-compose@pihole.service` (`/opt/pihole`, template
+   unit outside this repo) and must keep working with the DAS down.
+   - `mount-das.service`'s `docker restart scrutiny` is guarded with
+     `systemctl is-active docker.service`. At boot the docker CLI would
+     otherwise socket-activate dockerd, and any ordering of docker after the
+     DAS chain turns that into a deadlock until `TimeoutStartSec`.
 
 ### Network Architecture
 
@@ -264,8 +276,6 @@ cd /opt/mediaserver && docker compose logs -f [service_name]
 ```bash
 # After modifying systemd service files
 sudo cp systemd/*.service /etc/systemd/system/
-sudo install -Dm644 systemd/docker.service.d/after-mergerfs.conf \
-  /etc/systemd/system/docker.service.d/after-mergerfs.conf
 sudo systemctl daemon-reload
 sudo systemctl restart <service_name>
 
