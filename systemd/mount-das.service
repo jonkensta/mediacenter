@@ -47,6 +47,15 @@ ExecStartPost=-/usr/bin/systemctl try-reload-or-restart smartd.service
 # Skipping at boot is harmless: scrutiny has not started yet, so it gets fresh
 # device nodes anyway.
 ExecStartPost=-/usr/bin/sh -c '/usr/bin/systemctl is-active --quiet docker.service && /usr/bin/docker restart scrutiny'
+# Re-queue the rest of the chain. Restart=on-failure re-runs only this unit:
+# when the DAS misses the boot-time window, the boot jobs for mergerfs and
+# mediaserver fail with result 'dependency' and nothing re-creates them once a
+# later attempt succeeds, so the stack stayed down after every slow boot.
+# mediaserver's BindsTo= pulls mergerfs in. --no-block: this unit is still
+# activating, so a blocking start would wait on itself. Gated on is-enabled so
+# a deliberately disabled stack is not started, and "-" so a systemctl error
+# cannot fail the mount unit.
+ExecStartPost=-/usr/bin/sh -c '/usr/bin/systemctl is-enabled --quiet mediaserver.service && /usr/bin/systemctl start --no-block mediaserver.service'
 # Unmount only what is actually mounted (so this still succeeds after a failed
 # start), but fail on a genuine busy/error unmount. A failure here aborts the
 # remaining ExecStopPost lines, so the relay is NOT opened and the DAS keeps
