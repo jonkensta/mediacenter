@@ -341,6 +341,16 @@ services:
     networks:
       - mediaserver
 
+  radioambulante:
+    image: nginx:1.30-alpine
+    container_name: radioambulante
+    volumes:
+      - ./radioambulante/site:/usr/share/nginx/html:ro
+      - ./radioambulante/conf:/etc/nginx/conf.d:ro
+    restart: on-failure
+    networks:
+      - mediaserver
+
 networks:
   # Shared with docker-compose.pihole.yml, so it is created out-of-band:
   #   docker network create mediaserver

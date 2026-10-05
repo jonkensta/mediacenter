@@ -67,7 +67,7 @@ This repository contains configuration files and utilities for managing a Docker
 
 - **VPN Routing**: Deluge traffic routes through Gluetun VPN container using `network_mode: "service:gluetun"`
   - This affects reverse proxy setup: deluge's nginx config must set `upstream_app` to `gluetun` instead of `deluge`
-- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 12 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, scrutiny, sonarr, whisker), plus the Authelia portal
+- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 13 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, radioambulante, scrutiny, sonarr, whisker), plus the Authelia portal
 - **Forward Auth**: Authelia sits in front of the browser-facing admin UIs via SWAG's `auth_request` snippets (see the Authelia section below). Jellyfin and FoundryVTT keep their native auth only.
 - **Two networks**: `frontend` (compose-managed) holds the internet-facing tier — swag and endlessh. `mediaserver` (external, shared with the pihole compose file) holds everything else. `swag` is the only container on both, bridging TLS termination to the backend. `endlessh` is frontend-only, so a compromise there cannot reach Deluge RPC, the \*arr APIs, or Gluetun's control server. This limits blast radius but is not auth: a proxy-conf without auth still exposes an admin UI.
 - **Service Communication**: Non-host-mode containers communicate via Docker DNS using container names
@@ -267,6 +267,22 @@ rather than a published image.
   login tokens and has nothing to do with the media pool.
 - Login tokens (`data/tokens.json`) refresh themselves. The account
   credentials live in Bitwarden, never in this repo.
+
+### Radio Ambulante (Spanish study player)
+
+Static React player for Radio Ambulante episodes (ad-free audio, word-synced
+transcript, tap-to-translate) at `radioambulante.jstarr.me`, behind Authelia.
+Source lives in a separate private repo (`~/Source/radioambulante` on the
+workstation, github.com/jonkensta/radioambulante-study); episodes are built there
+(Whisper on the workstation GPU) and its `deploy/deploy.sh` rsyncs the build to
+`/opt/mediaserver/radioambulante/site` and the nginx config to
+`/opt/mediaserver/radioambulante/conf/default.conf`, then reloads nginx.
+
+- Plain `nginx:1.30-alpine`; nothing is built on this host.
+- `conf/` is mounted as a directory (not a single file) so a replaced
+  `default.conf` is seen by `nginx -s reload`.
+- Audio files carry a content hash in their name and are cached privately for
+  30 days; `index.html` and `data/` are `no-cache`.
 
 ### FoundryVTT
 
