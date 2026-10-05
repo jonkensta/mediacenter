@@ -67,7 +67,7 @@ This repository contains configuration files and utilities for managing a Docker
 
 - **VPN Routing**: Deluge traffic routes through Gluetun VPN container using `network_mode: "service:gluetun"`
   - This affects reverse proxy setup: deluge's nginx config must set `upstream_app` to `gluetun` instead of `deluge`
-- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 11 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, scrutiny, sonarr), plus the Authelia portal
+- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 12 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, scrutiny, sonarr, whisker), plus the Authelia portal
 - **Forward Auth**: Authelia sits in front of the browser-facing admin UIs via SWAG's `auth_request` snippets (see the Authelia section below). Jellyfin and FoundryVTT keep their native auth only.
 - **Two networks**: `frontend` (compose-managed) holds the internet-facing tier — swag and endlessh. `mediaserver` (external, shared with the pihole compose file) holds everything else. `swag` is the only container on both, bridging TLS termination to the backend. `endlessh` is frontend-only, so a compromise there cannot reach Deluge RPC, the \*arr APIs, or Gluetun's control server. This limits blast radius but is not auth: a proxy-conf without auth still exposes an admin UI.
 - **Service Communication**: Non-host-mode containers communicate via Docker DNS using container names
@@ -251,6 +251,22 @@ thermal actor (`etc/smartd.conf`); Scrutiny is the historian/alerter.
   `ExecStartPost=-docker restart scrutiny` to fix that automatically.
 - Collector runs on the container's internal cron (default: hourly). Manual
   run: `docker exec scrutiny /opt/scrutiny/bin/scrutiny-collector-metrics run`.
+
+### Whisker (Litter-Robot dashboard)
+
+Pet weight / litter box dashboard at `whisker.jstarr.me`, behind Authelia.
+Source lives in a separate repo (`~/Source/whisker` on the workstation); its
+`deploy/deploy.sh` rsyncs it to `/opt/mediaserver/whisker/app` and runs
+`docker compose up -d --build whisker`, so the compose service uses `build:`
+rather than a published image.
+
+- Polls the Whisker cloud every 30 minutes into SQLite at
+  `/opt/mediaserver/whisker/data` (mode 0700). Whisker keeps only about a week
+  of history, so a container outage longer than that loses readings.
+- Runs as `1000:1000` (jstarr), not `media`: the data dir holds Whisker
+  login tokens and has nothing to do with the media pool.
+- Login tokens (`data/tokens.json`) refresh themselves. The account
+  credentials live in Bitwarden, never in this repo.
 
 ### FoundryVTT
 
