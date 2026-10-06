@@ -259,10 +259,14 @@ thermal actor (`etc/smartd.conf`); Scrutiny is the historian/alerter.
 ### Whisker (Litter-Robot dashboard)
 
 Pet weight / litter box dashboard at `whisker.jstarr.me`, behind Authelia.
-Source lives in a separate repo (`~/Source/whisker` on the workstation); its
-`deploy/deploy.sh` rsyncs it to `/opt/mediaserver/whisker/app` and runs
-`docker compose up -d --build whisker`, so the compose service uses `build:`
-rather than a published image.
+Source lives in a separate private repo (`github.com/jonkensta/whisker`).
+`/opt/mediaserver/whisker/app` is a git clone of it, and the compose service
+builds from that directory (`build:`, no published image). The repo's
+`deploy/deploy.sh` refuses unpushed work, fast-forwards the clone to
+`origin/main`, and runs `docker compose up -d --build whisker`. Building
+straight from the GitHub URL was rejected: the repo is private, so every build
+would need GitHub auth (see the whisker README's "Deploying" section).
+`git -C /opt/mediaserver/whisker/app log -1` shows the deployed commit.
 
 - Polls the Whisker cloud every 30 minutes into SQLite at
   `/opt/mediaserver/whisker/data` (mode 0700). Whisker keeps only about a week
