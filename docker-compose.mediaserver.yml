@@ -229,6 +229,7 @@ services:
     user: "1012:1012"
     environment:
       - TZ=America/Chicago
+      - AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE=/config/smtp_password
     volumes:
       - ./authelia:/config
     restart: on-failure

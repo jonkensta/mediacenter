@@ -58,5 +58,8 @@ storage:
 # written to /config/notification.txt — read them with
 # `docker exec authelia cat /config/notification.txt`.
 notifier:
-  filesystem:
-    filename: '/config/notification.txt'
+  # Fastmail SMTP; the app password comes from AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE.
+  smtp:
+    address: 'submissions://smtp.fastmail.com:465'
+    username: 'YOUR_FASTMAIL_LOGIN'
+    sender: 'Authelia <authelia@jstarr.me>'

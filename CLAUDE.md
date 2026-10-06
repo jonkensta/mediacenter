@@ -216,9 +216,13 @@ Key invariants:
   **required** by SWAG's stock `authelia-server.conf`/`authelia-location.conf`
   snippets. The portal URL is `https://authelia.jstarr.me/authelia/` (note the
   subfolder); `swag/proxy-confs/authelia.subdomain.conf` serves that host.
-- Policy is `two_factor` (TOTP). There is no SMTP notifier: enrollment and
-  password-reset links land in the container at `/config/notification.txt`
-  (`docker exec authelia cat /config/notification.txt`).
+- Policy is `two_factor` (TOTP or WebAuthn/passkey). Enrollment and
+  password-reset codes are emailed via Fastmail SMTP from
+  `authelia@jstarr.me` to the user's `email` in `users_database.yml`. The
+  SMTP password is a Fastmail app password (Bitwarden item `app.fastmail.com`,
+  hidden field `authelia-app-password`) in `/opt/mediaserver/authelia/smtp_password`
+  (mode 0640, group media), read via `AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE`.
+  Authelia checks the SMTP login at startup and refuses to start if it fails.
 - A service is protected by uncommenting the two `include` lines
   (`authelia-server.conf` in the `server` block, `authelia-location.conf` in
   the `location /` block) in its proxy-conf under
