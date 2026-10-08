@@ -274,6 +274,40 @@ services:
     networks:
       - mediaserver
 
+  healthchecks:
+    # Dead man's switch for cron-style jobs (e.g. the ibp-server data.db
+    # backup): alerts by email when a job reports failure or misses its
+    # schedule. Mail goes out through Authelia's Fastmail app password.
+    image: lscr.io/linuxserver/healthchecks:v4.4-ls362
+    container_name: healthchecks
+    environment:
+      - PUID=1012
+      - PGID=1012
+      - TZ=America/Chicago
+      - SITE_ROOT=https://healthchecks.jstarr.me
+      - SITE_NAME=Healthchecks
+      - DEBUG=False
+      - SUPERUSER_EMAIL=YOUR_AUTHELIA_EMAIL
+      - FILE__SUPERUSER_PASSWORD=/config/superuser_password
+      # SWAG's authelia-location.conf sets Remote-Email, so the Authelia login
+      # is the Healthchecks login (accounts are matched by email).
+      - REMOTE_USER_HEADER=HTTP_REMOTE_EMAIL
+      - DEFAULT_FROM_EMAIL=Healthchecks <healthchecks@jstarr.me>
+      - EMAIL_HOST=smtp.fastmail.com
+      - EMAIL_PORT=465
+      - EMAIL_USE_TLS=False
+      - EMAIL_USE_SSL=True
+      - EMAIL_HOST_USER=YOUR_FASTMAIL_LOGIN
+      - FILE__EMAIL_HOST_PASSWORD=/run/secrets/smtp_password
+    volumes:
+      - ./healthchecks/config:/config
+      - ./authelia/smtp_password:/run/secrets/smtp_password:ro
+    restart: on-failure
+    # No host port: reached only via SWAG (healthchecks.subdomain.conf). The
+    # UI is behind Authelia; /ping/ is not, so jobs can report in.
+    networks:
+      - mediaserver
+
   cloudflare-ddns:
     # Replaces oznu/cloudflare-ddns, which has been archived upstream for years.
     # This one takes a scoped API token (Zone.DNS:Edit + Zone.Zone:Read on the

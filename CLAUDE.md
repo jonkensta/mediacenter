@@ -67,7 +67,7 @@ This repository contains configuration files and utilities for managing a Docker
 
 - **VPN Routing**: Deluge traffic routes through Gluetun VPN container using `network_mode: "service:gluetun"`
   - This affects reverse proxy setup: deluge's nginx config must set `upstream_app` to `gluetun` instead of `deluge`
-- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 13 services (bazarr, deluge, foundryvtt, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, radioambulante, scrutiny, sonarr, whisker), plus the Authelia portal
+- **Reverse Proxy**: SWAG handles SSL termination and reverse proxying for 14 services (bazarr, deluge, foundryvtt, healthchecks, heimdall, jellyfin, kimai, pihole, prowlarr, radarr, radioambulante, scrutiny, sonarr, whisker), plus the Authelia portal
 - **Forward Auth**: Authelia sits in front of the browser-facing admin UIs via SWAG's `auth_request` snippets (see the Authelia section below). Jellyfin and FoundryVTT keep their native auth only.
 - **Two networks**: `frontend` (compose-managed) holds the internet-facing tier — swag and endlessh. `mediaserver` (external, shared with the pihole compose file) holds everything else. `swag` is the only container on both, bridging TLS termination to the backend. `endlessh` is frontend-only, so a compromise there cannot reach Deluge RPC, the \*arr APIs, or Gluetun's control server. This limits blast radius but is not auth: a proxy-conf without auth still exposes an admin UI.
 - **Service Communication**: Non-host-mode containers communicate via Docker DNS using container names
@@ -255,6 +255,32 @@ thermal actor (`etc/smartd.conf`); Scrutiny is the historian/alerter.
   `ExecStartPost=-docker restart scrutiny` to fix that automatically.
 - Collector runs on the container's internal cron (default: hourly). Manual
   run: `docker exec scrutiny /opt/scrutiny/bin/scrutiny-collector-metrics run`.
+
+### Healthchecks (cron job monitoring)
+
+Self-hosted Healthchecks (`lscr.io/linuxserver/healthchecks`) at
+`healthchecks.jstarr.me`: a dead man's switch for scheduled jobs. A job pings
+its check URL on start and with its exit status; Healthchecks emails when a
+job fails or misses its cron schedule plus grace. First user: the ibp-server
+`data.db` backup (check `ibp-backup`, Mon/Fri 13:00, 2h grace; the Pi reads
+its ping URL from `~/.config/ibp-backup/ping-url`).
+
+- The UI is behind Authelia, and `REMOTE_USER_HEADER=HTTP_REMOTE_EMAIL` makes
+  the Authelia login the Healthchecks login (accounts are matched by email;
+  `SUPERUSER_EMAIL` is the Authelia user's email so they map to the admin).
+- `/ping/` bypasses Authelia so unattended jobs can report in; the check
+  UUID in the URL is the credential. That location blanks `Remote-Email` so a
+  client cannot impersonate a user through it.
+- Mail goes through Fastmail with Authelia's app password: the compose file
+  mounts `/opt/mediaserver/authelia/smtp_password` read-only and the
+  container reads it via `FILE__EMAIL_HOST_PASSWORD`. Placeholders:
+  `YOUR_AUTHELIA_EMAIL`, `YOUR_FASTMAIL_LOGIN`.
+- The superuser password lives in
+  `/opt/mediaserver/healthchecks/config/superuser_password` (mode 0600, no
+  trailing newline: the image pastes it into a Python string literal, so a
+  newline breaks init). Only Django `/admin` needs it.
+- Like everything in this stack it stops when `mediaserver.service` does, so
+  it cannot alert about outages of this host (DAS, power, internet).
 
 ### Whisker (Litter-Robot dashboard)
 
