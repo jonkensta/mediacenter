@@ -48,16 +48,18 @@ def await_block_devices(
     poll_interval: float = 5.0,
     timeout: float = 60.0,
 ):
-    """Wait until every UUID in device_uuids is present, or raise on timeout.
+    """Wait until every UUID in device_uuids is present at once, or raise on timeout.
 
     One udev enumeration serves all UUIDs per poll, and the deadline is measured
     against a monotonic clock so slow enumerations cannot overshoot the timeout.
     """
-    outstanding = set(device_uuids)
+    wanted = set(device_uuids)
     deadline = time.monotonic() + timeout
 
     while True:
-        outstanding -= present_uuids()
+        # Recompute from scratch each poll: a drive that appeared and then
+        # dropped out (flapping enclosure) must not count as present.
+        outstanding = wanted - present_uuids()
         if not outstanding:
             logger.info("All devices are available.")
             return
