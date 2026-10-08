@@ -1,7 +1,30 @@
-# Deployed to /opt/mediaserver/scrutiny/config/collector.yaml.
-# Appended to auto-detected devices: smartctl --scan misses the NVMe because
-# only the block node /dev/nvme0n1 is mapped into the container.
+# Device list for the Scrutiny collector. Everything here is *appended* to
+# what `smartctl --scan` auto-detects, so list every drive explicitly:
+#
+# - The DAS enclosure presents its drives as generic SCSI (SPC-4, identical
+#   fake LU id), so smartctl's autodetect returns garbage serials and checksum
+#   errors. Forcing `type: sat` makes it issue ATA passthrough, which works.
+#   Host smartd is unaffected because it forces SAT on its own.
+# - `smartctl --scan` misses the NVMe because only the block node
+#   /dev/nvme0n1 is mapped into the container.
+#
+# Container-side device names come from the `devices:` map in the compose
+# file. Keep the two lists in sync when drives are swapped.
 version: 1
 devices:
+  - device: /dev/sda   # ST4000LM024 WCK0NYK4
+    type: sat
+  - device: /dev/sdb   # ST4000LM024 WCK0NEKR
+    type: sat
+  - device: /dev/sdc   # ST4000LM024 WCK0R0RL
+    type: sat
+  - device: /dev/sdd   # HGST HUS724040ALE640 PK2338P4GXWMXC
+    type: sat
+  - device: /dev/sde   # WDC WD120EMFZ 9RG714DC
+    type: sat
+  - device: /dev/sdf   # Hitachi HUS724040ALE641 PCHJ54EB
+    type: sat
+  - device: /dev/sdg   # Hitachi HUS724040ALE641 PBK9K9LS
+    type: sat
   - device: /dev/nvme0n1
     type: nvme
